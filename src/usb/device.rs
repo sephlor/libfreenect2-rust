@@ -1,6 +1,6 @@
-use std::time::Duration;
-
+use crate::error;
 use nusb::{Device, DeviceInfo, Interface, MaybeFuture};
+use std::time::Duration;
 
 #[derive(Debug)]
 pub struct KinectUsb {
@@ -25,13 +25,13 @@ impl KinectUsb {
                 || dev.product_id() == Self::PRODUCT_ID_PREVIEW)
     }
 
-    pub fn list_devices() -> Result<Vec<DeviceInfo>, nusb::Error> {
+    pub fn list_devices() -> error::Result<Vec<DeviceInfo>> {
         let kinects: Vec<DeviceInfo> = nusb::list_devices()
             .wait()?
             .filter(Self::is_kinect)
             .collect();
 
-        println!("Found {} Kinect(s):", kinects.len());
+        println!("Found {} Kinect(s)", kinects.len());
         for dev in &kinects {
             println!(
                 "  bus {} addr {} {:04x}:{:04x} serial {:?}",
@@ -46,7 +46,7 @@ impl KinectUsb {
         Ok(kinects)
     }
 
-    pub fn open(info: &DeviceInfo) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn open(info: &DeviceInfo) -> error::Result<Self> {
         // Open the device
         let device = info.open().wait()?;
 

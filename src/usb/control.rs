@@ -1,10 +1,10 @@
 use super::KinectUsb;
-
+use crate::error;
 use nusb::transfer::{ControlOut, ControlType, Recipient};
 use nusb::MaybeFuture;
 
 impl KinectUsb {
-    pub(super) fn init_control_settings(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub(super) fn init_control_settings(&self) -> error::Result<()> {
         self.set_isochronous_delay()?;
         self.set_ir_interface_enabled(false)?;
         self.enable_power_states()?;
