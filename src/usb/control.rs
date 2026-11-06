@@ -1,14 +1,22 @@
 use super::KinectUsb;
 use crate::error;
+use log::debug;
 use nusb::transfer::{ControlOut, ControlType, Recipient};
 use nusb::MaybeFuture;
 
 impl KinectUsb {
     pub(super) fn init_control_settings(&self) -> error::Result<()> {
         self.set_isochronous_delay()?;
+        debug!("set isochronous delay");
+
         self.set_ir_interface_enabled(false)?;
+        debug!("IR interface disabled");
+
         self.enable_power_states()?;
+        debug!("power states enabled");
+
         self.set_video_function_enabled(false)?;
+        debug!("video function suspended");
         Ok(())
     }
 

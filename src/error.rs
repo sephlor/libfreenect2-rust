@@ -6,7 +6,7 @@ pub enum Error {
     #[error("USB transfer error: {0}")]
     Transfer(#[from] nusb::transfer::TransferError),
 
-    #[error("No Kinect device found")]
+    #[error("no Kinect device found")]
     NoDevice,
 }
 

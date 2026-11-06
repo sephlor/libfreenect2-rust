@@ -1,4 +1,5 @@
 use crate::error;
+use log::{info, trace};
 use nusb::{Device, DeviceInfo, Interface, MaybeFuture};
 use std::time::Duration;
 
@@ -31,10 +32,10 @@ impl KinectUsb {
             .filter(Self::is_kinect)
             .collect();
 
-        println!("Found {} Kinect(s)", kinects.len());
+        info!("found {} Kinect(s)", kinects.len());
         for dev in &kinects {
-            println!(
-                "  bus {} addr {} {:04x}:{:04x} serial {:?}",
+            info!(
+                "Kinect at bus {} addr {} {:04x}:{:04x} serial {:?}",
                 dev.busnum(),
                 dev.device_address(),
                 dev.vendor_id(),
@@ -47,11 +48,12 @@ impl KinectUsb {
     }
 
     pub fn open(info: &DeviceInfo) -> error::Result<Self> {
-        // Open the device
+        info!("opening device...");
         let device = info.open().wait()?;
 
-        // debug
-        // print_layout(&device);
+        if log::log_enabled!(log::Level::Trace) {
+            log_layout(&device);
+        }
 
         // Set configuration value
         let config = device
@@ -74,21 +76,24 @@ impl KinectUsb {
         };
         kinect.init_control_settings()?;
 
+        info!("device opened");
         Ok(kinect)
     }
 }
 
-#[allow(dead_code)]
-fn print_layout(device: &Device) {
+fn log_layout(device: &Device) {
     for config in device.configurations() {
-        println!("configuration {}", config.configuration_value());
+        let c = config.configuration_value();
+        trace!("configuration {c}");
         for iface in config.interfaces() {
-            println!("  interface {}", iface.interface_number());
+            let i = iface.interface_number();
+            trace!("configuration {c} interface {i}");
             for alt in iface.alt_settings() {
-                println!("    alt setting {}", alt.alternate_setting());
+                let a = alt.alternate_setting();
+                trace!("configuration {c} interface {i} alt setting {a}");
                 for ep in alt.endpoints() {
-                    println!(
-                        "      endpoint 0x{:02x}  {:?} {:?}  max packet {}",
+                    trace!(
+                        "configuration {c} interface {i} alt setting {a} endpoint 0x{:02x} {:?} {:?} max packet {}",
                         ep.address(),
                         ep.transfer_type(),
                         ep.direction(),
