@@ -1,12 +1,30 @@
+//! configuration 1
+//!   interface 0
+//!     alt setting 0
+//!       endpoint 0x81  Bulk In  max packet 1024
+//!       endpoint 0x02  Bulk Out  max packet 1024
+//!       endpoint 0x83  Bulk In  max packet 1024
+//!       endpoint 0x82  Interrupt In  max packet 64
+//!   interface 1
+//!     alt setting 0
+//!     alt setting 1
+//!       endpoint 0x84  Isochronous In  max packet 1024
+//!   interface 2
+//!     alt setting 0
+//!   interface 3
+//!     alt setting 0
+//!     alt setting 1
+//!       endpoint 0x85  Isochronous In  max packet 256
+
 use crate::error;
-use log::{info, trace};
+use error::Error;
+use log::{info, trace, warn};
 use nusb::{Device, DeviceInfo, Interface, MaybeFuture};
-use std::time::Duration;
+use std::{thread::sleep, time::Duration};
 
 #[derive(Debug)]
 pub struct KinectUsb {
-    pub(super) device: Device,
-    #[allow(dead_code)]
+    device: Device,
     control_interface: Interface,
     pub(super) ir_interface: Interface,
 }
@@ -16,20 +34,33 @@ impl KinectUsb {
     const PRODUCT_ID: u16 = 0x02D8;
     const PRODUCT_ID_PREVIEW: u16 = 0x02C4;
 
-    const IR_INTERFACE: u8 = 1;
+    pub(super) const IR_INTERFACE: u8 = 1;
     pub(super) const CONTROL_AND_RGB_INTERFACE: u8 = 0;
     pub(super) const TIMEOUT: Duration = Duration::from_millis(1000);
 
-    fn is_kinect(dev: &DeviceInfo) -> bool {
-        dev.vendor_id() == Self::VENDOR_ID
-            && (dev.product_id() == Self::PRODUCT_ID
-                || dev.product_id() == Self::PRODUCT_ID_PREVIEW)
+    pub(crate) fn control_interface(&self) -> &Interface {
+        &self.control_interface
+    }
+
+    pub(crate) fn device(&self) -> &Device {
+        &self.device
     }
 
     pub fn list_devices() -> error::Result<Vec<DeviceInfo>> {
         let kinects: Vec<DeviceInfo> = nusb::list_devices()
             .wait()?
             .filter(Self::is_kinect)
+            .filter(|dev| {
+                if dev.serial_number().is_none() {
+                    warn!(
+                        "skipping Kinect at bus {} addr {}: no serial number",
+                        dev.busnum(),
+                        dev.device_address()
+                    );
+                    return false;
+                }
+                true
+            })
             .collect();
 
         info!("found {} Kinect(s)", kinects.len());
@@ -47,7 +78,36 @@ impl KinectUsb {
         Ok(kinects)
     }
 
+    fn is_kinect(dev: &DeviceInfo) -> bool {
+        dev.vendor_id() == Self::VENDOR_ID
+            && (dev.product_id() == Self::PRODUCT_ID
+                || dev.product_id() == Self::PRODUCT_ID_PREVIEW)
+    }
+
+    // Reset on every open, like libfreenect2 (libfreenect2.cpp:1219).
+    // A previous session that ended mid-transaction (crash, Ctrl-C, unread reply)
+    // can leave the Kinect ignoring commands: sends on ep 0x02 time out until the
+    // device is replugged. A reset is a software replug that clears that state.
+    //
+    // After a reset the old handle is dead and the device may re-enumerate at a
+    // new address (see nusb `Device::reset` docs), so drop it, wait, and find it
+    // again by serial number.
     pub fn open(info: &DeviceInfo) -> error::Result<Self> {
+        let device = info.open().wait()?;
+        info!("resetting device...");
+        device.reset().wait()?;
+
+        drop(device);
+        sleep(Duration::from_secs(1));
+        let new_info = Self::list_devices()?
+            .into_iter()
+            .find(|d| d.serial_number() == info.serial_number())
+            .ok_or(Error::NoDevice)?;
+
+        Self::open_without_reset(&new_info)
+    }
+
+    fn open_without_reset(info: &DeviceInfo) -> error::Result<Self> {
         info!("opening device...");
         let device = info.open().wait()?;
 
@@ -104,23 +164,3 @@ fn log_layout(device: &Device) {
         }
     }
 }
-
-/*
-configuration 1
-  interface 0
-    alt setting 0
-      endpoint 0x81  Bulk In  max packet 1024
-      endpoint 0x02  Bulk Out  max packet 1024
-      endpoint 0x83  Bulk In  max packet 1024
-      endpoint 0x82  Interrupt In  max packet 64
-  interface 1
-    alt setting 0
-    alt setting 1
-      endpoint 0x84  Isochronous In  max packet 1024
-  interface 2
-    alt setting 0
-  interface 3
-    alt setting 0
-    alt setting 1
-      endpoint 0x85  Isochronous In  max packet 256
- */

@@ -34,7 +34,7 @@ impl KinectUsb {
         self.set_feature(Recipient::Device, U2_ENABLE, 0)
     }
 
-    fn set_video_function_enabled(
+    pub(crate) fn set_video_function_enabled(
         &self,
         enabled: bool,
     ) -> Result<(), nusb::transfer::TransferError> {
@@ -74,7 +74,7 @@ impl KinectUsb {
         value: u16,
         index: u16,
     ) -> Result<(), nusb::transfer::TransferError> {
-        self.device
+        self.device()
             .control_out(
                 ControlOut {
                     control_type: ControlType::Standard,
