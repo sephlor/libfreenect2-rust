@@ -16,9 +16,8 @@
 //!     alt setting 1
 //!       endpoint 0x85  Isochronous In  max packet 256
 
-use crate::error;
-use error::Error;
-use log::{info, trace, warn};
+use crate::error::{self, Error};
+use log::{debug, info, trace, warn};
 use nusb::{Device, DeviceInfo, Interface, MaybeFuture};
 use std::{thread::sleep, time::Duration};
 
@@ -63,9 +62,9 @@ impl KinectUsb {
             })
             .collect();
 
-        info!("found {} Kinect(s)", kinects.len());
+        debug!("found {} Kinect(s)", kinects.len());
         for dev in &kinects {
-            info!(
+            debug!(
                 "Kinect at bus {} addr {} {:04x}:{:04x} serial {:?}",
                 dev.busnum(),
                 dev.device_address(),
@@ -94,7 +93,7 @@ impl KinectUsb {
     // again by serial number.
     pub fn open(info: &DeviceInfo) -> error::Result<Self> {
         let device = info.open().wait()?;
-        info!("resetting device...");
+        info!("resetting Kinect {}", describe(info));
         device.reset().wait()?;
 
         drop(device);
@@ -108,7 +107,7 @@ impl KinectUsb {
     }
 
     fn open_without_reset(info: &DeviceInfo) -> error::Result<Self> {
-        info!("opening device...");
+        info!("opening Kinect {}", describe(info));
         let device = info.open().wait()?;
 
         if log::log_enabled!(log::Level::Trace) {
@@ -136,9 +135,18 @@ impl KinectUsb {
         };
         kinect.init_control_settings()?;
 
-        info!("device opened");
+        info!("Kinect {} opened", describe(info));
         Ok(kinect)
     }
+}
+
+fn describe(info: &DeviceInfo) -> String {
+    format!(
+        "{} (bus {} addr {})",
+        info.serial_number().unwrap_or("unknown"),
+        info.busnum(),
+        info.device_address()
+    )
 }
 
 fn log_layout(device: &Device) {

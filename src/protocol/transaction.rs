@@ -35,7 +35,7 @@ impl CommandTransaction {
     pub(crate) fn execute(&mut self, cmd: &Command) -> error::Result<Vec<u8>> {
         let seq = self.next_seq;
         self.next_seq = self.next_seq.wrapping_add(1);
-        debug!("Executing {cmd:?} seq {seq}");
+        debug!("executing {cmd:?} seq {seq}");
 
         // Send the command
         self.send(cmd.to_bytes(seq))?;

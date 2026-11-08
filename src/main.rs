@@ -3,12 +3,9 @@ mod kinect;
 mod protocol;
 mod usb;
 
-use std::process::ExitCode;
-
-use error::Error;
 use kinect::Kinect;
 use log::error;
-use usb::KinectUsb;
+use std::process::ExitCode;
 
 fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -37,9 +34,7 @@ fn run() -> error::Result<()> {
     8. Close the device
      */
 
-    let kinects = KinectUsb::list_devices()?;
-    let kinect_info = kinects.first().ok_or(Error::NoDevice)?;
-    let mut kinect = Kinect::open(kinect_info)?;
+    let mut kinect = Kinect::open_default_device()?;
     kinect.start_rgb()?;
 
     Ok(())

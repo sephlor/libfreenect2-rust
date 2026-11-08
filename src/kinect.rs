@@ -1,4 +1,4 @@
-use crate::error;
+use crate::error::{self, Error};
 use crate::protocol::response;
 use crate::protocol::{Command, CommandTransaction};
 use crate::usb::KinectUsb;
@@ -21,6 +21,13 @@ pub struct Kinect {
 }
 
 impl Kinect {
+    pub fn open_default_device() -> error::Result<Self> {
+        let kinects = KinectUsb::list_devices()?;
+        info!("found {} Kinect(s)", kinects.len());
+        let kinect_info = kinects.first().ok_or(Error::NoDevice)?;
+        Self::open(kinect_info)
+    }
+
     pub fn open(info: &DeviceInfo) -> error::Result<Self> {
         let usb = KinectUsb::open(info)?;
         let tx = CommandTransaction::new(usb.control_interface())?;
@@ -41,17 +48,17 @@ impl Kinect {
         let firmware_bytes = self.tx.execute(&Command::read_firmware_versions())?;
         self.firmware = response::parse_firmware(&firmware_bytes);
         info!(
-            "Firmware: {}",
+            "firmware: {}",
             self.firmware.as_deref().unwrap_or("unknown")
         );
 
         let serial_bytes = self.tx.execute(&Command::read_serial_number())?;
         let new_serial = response::parse_serial(&serial_bytes);
-        info!("Serial number: {new_serial}");
+        info!("serial number: {new_serial}");
 
         if new_serial != self.serial {
             warn!(
-                "Serial number reported by nusb {} differs \
+                "serial number reported by nusb {} differs \
                 from serial number {} in device protocol",
                 self.serial, new_serial
             );
