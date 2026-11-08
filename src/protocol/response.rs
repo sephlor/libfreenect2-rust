@@ -95,6 +95,9 @@ mod tests {
 
     #[test]
     fn parse_status_bytes() {
+        // In decimal: [1, 38, 0, 0]
+        // In u32: 9729
+
         let expected = 0x2601; // bit 0 set: ready
 
         let bytes: [u8; 4] = [0x01, 0x26, 0x00, 0x00];

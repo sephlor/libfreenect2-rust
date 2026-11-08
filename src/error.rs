@@ -23,6 +23,12 @@ pub enum Error {
 
     #[error("missing or malformed response complete")]
     MissingResponseComplete,
+
+    #[error("device closed")]
+    DeviceClosed,
+
+    #[error("already streaming, if this is a mistake an earlier stop call may have failed")]
+    AlreadyStreaming,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

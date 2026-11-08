@@ -50,7 +50,7 @@ impl KinectUsb {
         self.set_feature(Recipient::Interface, FUNCTION_SUSPEND, index)
     }
 
-    fn set_ir_interface_enabled(&self, enabled: bool) -> error::Result<()> {
+    pub(crate) fn set_ir_interface_enabled(&self, enabled: bool) -> error::Result<()> {
         let alt = u8::from(enabled);
         self.ir_interface().set_alt_setting(alt).wait()?;
         Ok(())

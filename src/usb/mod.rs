@@ -7,4 +7,4 @@ use std::time::Duration;
 
 pub(crate) use device::KinectUsb;
 
-pub(crate) const TIMEOUT: Duration = Duration::from_millis(1000);
+pub(crate) const TIMEOUT: Duration = Duration::from_secs(1);
