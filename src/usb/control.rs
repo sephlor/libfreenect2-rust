@@ -1,32 +1,33 @@
-use super::KinectUsb;
-use crate::error;
 use log::debug;
-use nusb::transfer::{ControlOut, ControlType, Recipient};
 use nusb::MaybeFuture;
+use nusb::transfer::{ControlOut, ControlType, Recipient};
+
+use super::{KinectUsb, TIMEOUT};
+use crate::error;
 
 impl KinectUsb {
     pub(super) fn init_control_settings(&self) -> error::Result<()> {
+        debug!("setting isochronous delay");
         self.set_isochronous_delay()?;
-        debug!("set isochronous delay");
 
+        debug!("disabling IR interface");
         self.set_ir_interface_enabled(false)?;
-        debug!("IR interface disabled");
 
+        debug!("enabling power states");
         self.enable_power_states()?;
-        debug!("power states enabled");
 
+        debug!("suspending video function");
         self.set_video_function_enabled(false)?;
-        debug!("video function suspended");
         Ok(())
     }
 
-    fn set_isochronous_delay(&self) -> Result<(), nusb::transfer::TransferError> {
+    fn set_isochronous_delay(&self) -> error::Result<()> {
         const SET_ISOCH_DELAY: u8 = 0x31;
         const ISOCH_DELAY_NS: u16 = 40;
         self.standard_control_out(Recipient::Device, SET_ISOCH_DELAY, ISOCH_DELAY_NS, 0)
     }
 
-    fn enable_power_states(&self) -> Result<(), nusb::transfer::TransferError> {
+    fn enable_power_states(&self) -> error::Result<()> {
         const U1_ENABLE: u16 = 48;
         const U2_ENABLE: u16 = 49;
 
@@ -34,10 +35,7 @@ impl KinectUsb {
         self.set_feature(Recipient::Device, U2_ENABLE, 0)
     }
 
-    pub(crate) fn set_video_function_enabled(
-        &self,
-        enabled: bool,
-    ) -> Result<(), nusb::transfer::TransferError> {
+    pub(crate) fn set_video_function_enabled(&self, enabled: bool) -> error::Result<()> {
         const FUNCTION_SUSPEND: u16 = 0;
         const LOW_POWER_SUSPEND: u16 = 1 << 0;
         const REMOTE_WAKE: u16 = 1 << 1;
@@ -52,17 +50,13 @@ impl KinectUsb {
         self.set_feature(Recipient::Interface, FUNCTION_SUSPEND, index)
     }
 
-    fn set_ir_interface_enabled(&self, enabled: bool) -> Result<(), nusb::Error> {
-        let alt = if enabled { 1 } else { 0 };
-        self.ir_interface.set_alt_setting(alt).wait()
+    fn set_ir_interface_enabled(&self, enabled: bool) -> error::Result<()> {
+        let alt = u8::from(enabled);
+        self.ir_interface().set_alt_setting(alt).wait()?;
+        Ok(())
     }
 
-    fn set_feature(
-        &self,
-        recipient: Recipient,
-        feature: u16,
-        index: u16,
-    ) -> Result<(), nusb::transfer::TransferError> {
+    fn set_feature(&self, recipient: Recipient, feature: u16, index: u16) -> error::Result<()> {
         const SET_FEATURE: u8 = 0x03;
         self.standard_control_out(recipient, SET_FEATURE, feature, index)
     }
@@ -73,7 +67,7 @@ impl KinectUsb {
         request: u8,
         value: u16,
         index: u16,
-    ) -> Result<(), nusb::transfer::TransferError> {
+    ) -> error::Result<()> {
         self.device()
             .control_out(
                 ControlOut {
@@ -84,8 +78,9 @@ impl KinectUsb {
                     index,
                     data: &[],
                 },
-                Self::TIMEOUT,
+                TIMEOUT,
             )
-            .wait()
+            .wait()?;
+        Ok(())
     }
 }

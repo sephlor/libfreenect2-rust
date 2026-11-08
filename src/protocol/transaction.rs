@@ -1,14 +1,17 @@
-//! Endpoints, see device.rs:
-//! 0x02: host -> Kinect
-//! 0x81: Kinect -> host
+//! Send a command and collect its response, on the endpoints of interface 0
+//! (layout in the `usb::device` module docs):
+//! - 0x02: host -> Kinect
+//! - 0x81: Kinect -> host
 
-use super::read_u32;
-use crate::error::{self, Error};
-use crate::protocol::Command;
+use std::fmt;
+
 use log::{debug, warn};
 use nusb::transfer::{Buffer, Bulk, In, Out};
 use nusb::{Endpoint, Interface};
-use std::time::Duration;
+
+use super::{Command, read_u32};
+use crate::error::{self, Error};
+use crate::usb::TIMEOUT;
 
 pub(crate) struct CommandTransaction {
     out_ep: Endpoint<Bulk, Out>,
@@ -16,13 +19,19 @@ pub(crate) struct CommandTransaction {
     next_seq: u32,
 }
 
+impl fmt::Debug for CommandTransaction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CommandTransaction")
+            .field("next_seq", &self.next_seq)
+            .finish_non_exhaustive()
+    }
+}
+
 impl CommandTransaction {
     const IN_EP: u8 = 0x81;
     const OUT_EP: u8 = 0x02;
     const RESPONSE_COMPLETE_LEN: usize = 16;
     const RESPONSE_COMPLETE_MAGIC: u32 = 0x0A6F_E000;
-
-    const TIMEOUT: Duration = Duration::from_millis(1000);
 
     pub(crate) fn new(interface: &Interface) -> error::Result<Self> {
         Ok(Self {
@@ -65,8 +74,9 @@ impl CommandTransaction {
             return Err(Error::MissingResponseComplete);
         }
 
-        let complete_seq = read_u32(&complete, 4);
-        if complete_seq != seq {
+        if let Some(complete_seq) = read_u32(&complete, 4)
+            && complete_seq != seq
+        {
             warn!("response complete has sequence {complete_seq}, expected {seq}");
         }
 
@@ -77,7 +87,7 @@ impl CommandTransaction {
         let expected = bytes.len();
         let buffer = Buffer::from(bytes);
 
-        let completion = self.out_ep.transfer_blocking(buffer, Self::TIMEOUT);
+        let completion = self.out_ep.transfer_blocking(buffer, TIMEOUT);
         completion.status?;
 
         let got = completion.actual_len;
@@ -94,7 +104,7 @@ impl CommandTransaction {
         let requested_len = len.max(1).next_multiple_of(packet_size);
         let buffer = Buffer::new(requested_len);
 
-        let completion = self.in_ep.transfer_blocking(buffer, Self::TIMEOUT);
+        let completion = self.in_ep.transfer_blocking(buffer, TIMEOUT);
         let bytes = completion.into_result()?.into_vec();
 
         Ok(bytes)
@@ -102,7 +112,7 @@ impl CommandTransaction {
 
     fn is_response_complete(bytes: &[u8]) -> bool {
         bytes.len() == Self::RESPONSE_COMPLETE_LEN
-            && read_u32(bytes, 0) == Self::RESPONSE_COMPLETE_MAGIC
+            && read_u32(bytes, 0) == Some(Self::RESPONSE_COMPLETE_MAGIC)
     }
 }
 
@@ -111,7 +121,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn valid_completion_packet() {
+    fn valid_completion_response() {
         let bytes: [u8; CommandTransaction::RESPONSE_COMPLETE_LEN] = [
             0x00, 0xE0, 0x6F, 0x0A, // RESPONSE_COMPLETE_MAGIC 0x0A6F_E000, little-endian
             0x01, 0x00, 0x00, 0x00, // sequence = 1
@@ -123,7 +133,7 @@ mod tests {
 
     #[test]
     fn invalid_completion_response_command() {
-        let bytes: [u8; 16] = [
+        let bytes: [u8; CommandTransaction::RESPONSE_COMPLETE_LEN] = [
             0x09, 0x20, 0x02, 0x06, // Command::MAGIC 0x0602_2009, little-endian
             0x01, 0x00, 0x00, 0x00, // sequence = 1
             0x00, 0x02, 0x00, 0x00, // max_response_length = 0x200

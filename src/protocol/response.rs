@@ -11,9 +11,9 @@ pub(crate) fn parse_serial(data: &[u8]) -> String {
 pub(crate) fn parse_firmware(data: &[u8]) -> Option<String> {
     let record = data.as_chunks::<16>().0.get(3)?;
 
-    let maj_min = read_u32(record, 0);
-    let revision = read_u32(record, 4);
-    let build = read_u32(record, 8);
+    let maj_min = read_u32(record, 0)?;
+    let revision = read_u32(record, 4)?;
+    let build = read_u32(record, 8)?;
     let maj = maj_min >> 16;
     let min = maj_min & 0xffff;
 
@@ -21,8 +21,7 @@ pub(crate) fn parse_firmware(data: &[u8]) -> Option<String> {
 }
 
 pub(crate) fn parse_status(data: &[u8]) -> Option<u32> {
-    let status = data.first_chunk::<4>()?;
-    Some(u32::from_le_bytes(*status))
+    read_u32(data, 0)
 }
 
 #[cfg(test)]
@@ -46,11 +45,7 @@ mod tests {
 
     #[test]
     fn parse_serial_bytes_empty() {
-        let expected = "";
-
-        let bytes = [];
-
-        assert_eq!(parse_serial(&bytes), expected);
+        assert_eq!(parse_serial(&[]), "");
     }
 
     #[test]
@@ -70,11 +65,7 @@ mod tests {
 
     #[test]
     fn parse_firmware_bytes_empty() {
-        let expected = None;
-
-        let bytes = [];
-
-        assert_eq!(parse_firmware(&bytes), expected);
+        assert_eq!(parse_firmware(&[]), None);
     }
 
     #[test]
@@ -113,11 +104,7 @@ mod tests {
 
     #[test]
     fn parse_status_bytes_empty() {
-        let expected = None;
-
-        let bytes = [];
-
-        assert_eq!(parse_status(&bytes), expected);
+        assert_eq!(parse_status(&[]), None);
     }
 
     #[test]

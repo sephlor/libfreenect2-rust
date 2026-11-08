@@ -1,9 +1,9 @@
-use crate::error::{self, Error};
-use crate::protocol::response;
-use crate::protocol::{Command, CommandTransaction};
-use crate::usb::KinectUsb;
 use log::{debug, info, warn};
 use nusb::DeviceInfo;
+
+use crate::error::{self, Error};
+use crate::protocol::{Command, CommandTransaction, response};
+use crate::usb::KinectUsb;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -12,6 +12,7 @@ enum State {
     Closed,
 }
 
+#[derive(Debug)]
 pub struct Kinect {
     usb: KinectUsb,
     tx: CommandTransaction,
@@ -29,15 +30,18 @@ impl Kinect {
     }
 
     pub fn open(info: &DeviceInfo) -> error::Result<Self> {
+        let serial = info
+            .serial_number()
+            .ok_or(Error::NoSerialNumber)?
+            .to_owned();
         let usb = KinectUsb::open(info)?;
         let tx = CommandTransaction::new(usb.control_interface())?;
-        let usb_serial = info.serial_number().unwrap_or("unknown").to_owned();
 
         Ok(Self {
             usb,
             tx,
             state: State::Open,
-            serial: usb_serial,
+            serial,
             firmware: None,
         })
     }
@@ -78,6 +82,6 @@ impl Kinect {
 
 impl Drop for Kinect {
     fn drop(&mut self) {
-        debug!("drop Kinect")
+        debug!("drop Kinect");
     }
 }

@@ -3,9 +3,11 @@ mod kinect;
 mod protocol;
 mod usb;
 
-use kinect::Kinect;
-use log::error;
 use std::process::ExitCode;
+
+use log::error;
+
+use kinect::Kinect;
 
 fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();

@@ -1,3 +1,5 @@
+//! The Kinect command protocol on bulk endpoints 0x02 / 0x81.
+
 mod command;
 pub(crate) mod response;
 mod transaction;
@@ -5,8 +7,8 @@ mod transaction;
 pub(crate) use command::Command;
 pub(crate) use transaction::CommandTransaction;
 
-/// Reads a little-endian u32 at `offset`.
-/// Panics if `bytes` is shorter than `offset + 4`; callers check the length first.
-fn read_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+/// Reads a little-endian u32 at `offset`, or `None` if `bytes` is too short.
+fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+    let word = bytes.get(offset..)?.first_chunk::<4>()?;
+    Some(u32::from_le_bytes(*word))
 }

@@ -12,6 +12,11 @@ impl Command {
     const READ_DATA_PAGE: u32 = 0x22;
     const READ_STATUS: u32 = 0x16;
 
+    const FIRMWARE_VERSIONS_LEN: u32 = 0x200;
+    const SERIAL_NUMBER_LEN: u32 = 0x80;
+    const SERIAL_NUMBER_PAGE: u32 = 0x01;
+    const STATUS_LEN: u32 = 0x04;
+
     pub(super) fn max_response_len(&self) -> usize {
         self.max_response_len as usize
     }
@@ -38,8 +43,8 @@ impl Command {
     pub(crate) fn read_firmware_versions() -> Self {
         Self {
             id: Self::READ_FIRMWARE_VERSIONS,
-            max_response_len: 0x200,
-            min_response_len: 0x200,
+            max_response_len: Self::FIRMWARE_VERSIONS_LEN,
+            min_response_len: Self::FIRMWARE_VERSIONS_LEN,
             params: Vec::new(),
         }
     }
@@ -47,17 +52,17 @@ impl Command {
     pub(crate) fn read_serial_number() -> Self {
         Self {
             id: Self::READ_DATA_PAGE,
-            max_response_len: 0x80,
-            min_response_len: 0x80,
-            params: vec![0x01],
+            max_response_len: Self::SERIAL_NUMBER_LEN,
+            min_response_len: Self::SERIAL_NUMBER_LEN,
+            params: vec![Self::SERIAL_NUMBER_PAGE],
         }
     }
 
     pub(crate) fn read_status(param: u32) -> Self {
         Self {
             id: Self::READ_STATUS,
-            max_response_len: 0x04,
-            min_response_len: 0x04,
+            max_response_len: Self::STATUS_LEN,
+            min_response_len: Self::STATUS_LEN,
             params: vec![param],
         }
     }

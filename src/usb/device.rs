@@ -1,3 +1,8 @@
+//! Finding, resetting and opening the Kinect, and claiming its interfaces.
+//!
+//! USB layout of the Kinect v2:
+//!
+//! ```text
 //! configuration 1
 //!   interface 0
 //!     alt setting 0
@@ -15,17 +20,21 @@
 //!     alt setting 0
 //!     alt setting 1
 //!       endpoint 0x85  Isochronous In  max packet 256
+//! ```
 
-use crate::error::{self, Error};
+use std::thread::sleep;
+use std::time::Duration;
+
 use log::{debug, info, trace, warn};
 use nusb::{Device, DeviceInfo, Interface, MaybeFuture};
-use std::{thread::sleep, time::Duration};
+
+use crate::error::{self, Error};
 
 #[derive(Debug)]
-pub struct KinectUsb {
+pub(crate) struct KinectUsb {
     device: Device,
     control_interface: Interface,
-    pub(super) ir_interface: Interface,
+    ir_interface: Interface,
 }
 
 impl KinectUsb {
@@ -35,17 +44,20 @@ impl KinectUsb {
 
     pub(super) const IR_INTERFACE: u8 = 1;
     pub(super) const CONTROL_AND_RGB_INTERFACE: u8 = 0;
-    pub(super) const TIMEOUT: Duration = Duration::from_millis(1000);
 
     pub(crate) fn control_interface(&self) -> &Interface {
         &self.control_interface
     }
 
-    pub(crate) fn device(&self) -> &Device {
+    pub(super) fn ir_interface(&self) -> &Interface {
+        &self.ir_interface
+    }
+
+    pub(super) fn device(&self) -> &Device {
         &self.device
     }
 
-    pub fn list_devices() -> error::Result<Vec<DeviceInfo>> {
+    pub(crate) fn list_devices() -> error::Result<Vec<DeviceInfo>> {
         let kinects: Vec<DeviceInfo> = nusb::list_devices()
             .wait()?
             .filter(Self::is_kinect)
@@ -65,12 +77,10 @@ impl KinectUsb {
         debug!("found {} Kinect(s)", kinects.len());
         for dev in &kinects {
             debug!(
-                "Kinect at bus {} addr {} {:04x}:{:04x} serial {:?}",
-                dev.busnum(),
-                dev.device_address(),
+                "Kinect {} {:04x}:{:04x}",
+                describe(dev),
                 dev.vendor_id(),
-                dev.product_id(),
-                dev.serial_number()
+                dev.product_id()
             );
         }
 
@@ -83,15 +93,17 @@ impl KinectUsb {
                 || dev.product_id() == Self::PRODUCT_ID_PREVIEW)
     }
 
-    // Reset on every open, like libfreenect2 (libfreenect2.cpp:1219).
-    // A previous session that ended mid-transaction (crash, Ctrl-C, unread reply)
-    // can leave the Kinect ignoring commands: sends on ep 0x02 time out until the
-    // device is replugged. A reset is a software replug that clears that state.
-    //
-    // After a reset the old handle is dead and the device may re-enumerate at a
-    // new address (see nusb `Device::reset` docs), so drop it, wait, and find it
-    // again by serial number.
-    pub fn open(info: &DeviceInfo) -> error::Result<Self> {
+    /// Resets the device, then opens it. This mirrors libfreenect2
+    /// (libfreenect2.cpp:1219).
+    ///
+    /// A previous session that ended mid-transaction (crash, Ctrl-C, unread reply)
+    /// can leave the Kinect ignoring commands: sends on ep 0x02 time out until the
+    /// device is replugged. A reset is a software replug that clears that state.
+    ///
+    /// After a reset the old handle is dead and the device may re-enumerate at a
+    /// new address (see nusb `Device::reset` docs), so drop it, wait, and find it
+    /// again by serial number.
+    pub(crate) fn open(info: &DeviceInfo) -> error::Result<Self> {
         let device = info.open().wait()?;
         info!("resetting Kinect {}", describe(info));
         device.reset().wait()?;
@@ -117,8 +129,7 @@ impl KinectUsb {
         // Set configuration value
         let config = device
             .active_configuration()
-            .map(|c| c.configuration_value())
-            .unwrap_or(0);
+            .map_or(0, |c| c.configuration_value());
         if config != 1 {
             device.set_configuration(1).wait()?;
         }
@@ -128,15 +139,15 @@ impl KinectUsb {
             .wait()?;
         let ir_interface = device.claim_interface(Self::IR_INTERFACE).wait()?;
 
-        let kinect = KinectUsb {
+        let usb = KinectUsb {
             device,
             control_interface,
             ir_interface,
         };
-        kinect.init_control_settings()?;
+        usb.init_control_settings()?;
 
         info!("Kinect {} opened", describe(info));
-        Ok(kinect)
+        Ok(usb)
     }
 }
 

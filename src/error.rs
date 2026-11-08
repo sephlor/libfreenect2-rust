@@ -9,6 +9,9 @@ pub enum Error {
     #[error("no Kinect device found")]
     NoDevice,
 
+    #[error("Kinect has no USB serial number")]
+    NoSerialNumber,
+
     #[error("response too short: expected at least {expected} bytes, got {got}")]
     ResponseTooShort { expected: usize, got: usize },
 
