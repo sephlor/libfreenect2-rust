@@ -7,6 +7,7 @@ use nusb::DeviceInfo;
 use crate::error::{self, Error};
 use crate::protocol::{Command, CommandTransaction, response};
 use crate::usb::KinectUsb;
+use crate::usb::bulk_stream::BulkStream;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -22,6 +23,7 @@ pub struct Kinect {
     state: State,
     serial: String,
     firmware: Option<String>,
+    rgb_stream: Option<BulkStream>,
 }
 
 impl Kinect {
@@ -42,7 +44,7 @@ impl Kinect {
             .ok_or(Error::NoSerialNumber)?
             .to_owned();
         let usb = KinectUsb::open(info)?;
-        let tx = CommandTransaction::new(usb.control_interface())?;
+        let tx = CommandTransaction::new(usb.control_and_rgb_interface())?;
 
         Ok(Self {
             usb,
@@ -50,6 +52,7 @@ impl Kinect {
             state: State::Open,
             serial,
             firmware: None,
+            rgb_stream: None,
         })
     }
 
@@ -120,8 +123,7 @@ impl Kinect {
 
         self.tx.execute(&Command::init_streams())?;
 
-        // MAYBE TODO: setIrInterfaceState enabled by uncommenting this
-        // self.usb.set_ir_interface_enabled(true)?;
+        self.usb.set_ir_interface_enabled(true)?;
 
         let status_bytes = self
             .tx
@@ -130,22 +132,22 @@ impl Kinect {
         debug!("status: {:?}", status);
 
         self.tx.execute(&Command::set_streaming_enabled())?;
-
-        // MAYBE TODO: enable rgb transfer pools
-        // MAYBE TODO: enable ir transfer pools
-
         self.state = State::Streaming;
-        info!("streaming started");
+        info!("streaming enabled");
+
+        let stream = BulkStream::start(self.usb.control_and_rgb_interface())?;
+        self.rgb_stream = Some(stream);
 
         Ok(())
     }
 
-    pub fn stop_streaming(&mut self) -> error::Result<()> {
+    pub fn stop(&mut self) -> error::Result<()> {
         if self.state == State::Streaming {
-            info!("streaming stopping");
+            info!("stopping stream");
 
-            // MAYBE TODO: disable transfer pool for rgb
-            // MAYBE TODO: disable transfer pool for ir
+            if let Some(stream) = self.rgb_stream.take() {
+                stream.stop();
+            }
 
             self.usb.set_ir_interface_enabled(false)?;
 
@@ -180,7 +182,7 @@ impl Kinect {
                 return Ok(());
             }
             State::Streaming => {
-                if let Err(e) = self.stop_streaming() {
+                if let Err(e) = self.stop() {
                     warn!("stop failed while closing, continuing: {e}");
                 }
             }

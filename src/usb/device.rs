@@ -33,7 +33,7 @@ use crate::error::{self, Error};
 #[derive(Debug)]
 pub(crate) struct KinectUsb {
     device: Device,
-    control_interface: Interface,
+    control_and_rgb_interface: Interface,
     ir_interface: Interface,
 }
 
@@ -45,8 +45,8 @@ impl KinectUsb {
     pub(super) const IR_INTERFACE: u8 = 1;
     pub(super) const CONTROL_AND_RGB_INTERFACE: u8 = 0;
 
-    pub(crate) fn control_interface(&self) -> &Interface {
-        &self.control_interface
+    pub(crate) fn control_and_rgb_interface(&self) -> &Interface {
+        &self.control_and_rgb_interface
     }
 
     pub(super) fn ir_interface(&self) -> &Interface {
@@ -141,7 +141,7 @@ impl KinectUsb {
 
         let usb = KinectUsb {
             device,
-            control_interface,
+            control_and_rgb_interface: control_interface,
             ir_interface,
         };
         usb.init_control_settings()?;

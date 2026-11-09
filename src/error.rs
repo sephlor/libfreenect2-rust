@@ -1,5 +1,8 @@
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("IO error: {0}")]
+    ThreadSpawn(#[from] std::io::Error),
+
     #[error("USB error: {0}")]
     Usb(#[from] nusb::Error),
 

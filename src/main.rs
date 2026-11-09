@@ -8,7 +8,11 @@ use log::error;
 use std::{process::ExitCode, thread::sleep, time::Duration};
 
 fn main() -> ExitCode {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    env_logger::Builder::new()
+        .filter_level(log::LevelFilter::Info)
+        .filter_module("nusb", log::LevelFilter::Info)
+        .parse_env(env_logger::Env::default())
+        .init();
 
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -23,9 +27,10 @@ fn run() -> error::Result<()> {
     let mut kinect = Kinect::open_default_device()?;
     kinect.start_rgb()?;
 
-    sleep(Duration::from_secs(7));
+    sleep(Duration::from_secs(15));
 
-    kinect.stop_streaming()?;
+    kinect.stop()?;
+
     kinect.close()?;
 
     Ok(())

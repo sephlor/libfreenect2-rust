@@ -14,8 +14,8 @@ use crate::error::{self, Error};
 use crate::usb::TIMEOUT;
 
 pub(crate) struct CommandTransaction {
-    out_ep: Endpoint<Bulk, Out>,
-    in_ep: Endpoint<Bulk, In>,
+    ep_out: Endpoint<Bulk, Out>,
+    ep_in: Endpoint<Bulk, In>,
     next_seq: u32,
 }
 
@@ -28,15 +28,15 @@ impl fmt::Debug for CommandTransaction {
 }
 
 impl CommandTransaction {
-    const IN_EP: u8 = 0x81;
-    const OUT_EP: u8 = 0x02;
+    const EP_IN: u8 = 0x81;
+    const EP_OUT: u8 = 0x02;
     const RESPONSE_COMPLETE_LEN: usize = 16;
     const RESPONSE_COMPLETE_MAGIC: u32 = 0x0A6F_E000;
 
     pub(crate) fn new(interface: &Interface) -> error::Result<Self> {
         Ok(Self {
-            out_ep: interface.endpoint::<Bulk, Out>(Self::OUT_EP)?,
-            in_ep: interface.endpoint::<Bulk, In>(Self::IN_EP)?,
+            ep_out: interface.endpoint::<Bulk, Out>(Self::EP_OUT)?,
+            ep_in: interface.endpoint::<Bulk, In>(Self::EP_IN)?,
             next_seq: 0,
         })
     }
@@ -87,9 +87,12 @@ impl CommandTransaction {
         let expected = bytes.len();
         let buffer = Buffer::from(bytes);
 
-        let completion = self.out_ep.transfer_blocking(buffer, TIMEOUT);
+        let completion = self.ep_out.transfer_blocking(buffer, TIMEOUT);
+
+        // Bail if completion error
         completion.status?;
 
+        // Second check of length just in case
         let got = completion.actual_len;
 
         if got != expected {
@@ -100,11 +103,11 @@ impl CommandTransaction {
     }
 
     fn receive(&mut self, len: usize) -> error::Result<Vec<u8>> {
-        let packet_size = self.in_ep.max_packet_size();
+        let packet_size = self.ep_in.max_packet_size();
         let requested_len = len.max(1).next_multiple_of(packet_size);
         let buffer = Buffer::new(requested_len);
 
-        let completion = self.in_ep.transfer_blocking(buffer, TIMEOUT);
+        let completion = self.ep_in.transfer_blocking(buffer, TIMEOUT);
         let bytes = completion.into_result()?.into_vec();
 
         Ok(bytes)
