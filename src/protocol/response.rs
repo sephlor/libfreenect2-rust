@@ -1,4 +1,4 @@
-use super::read_u32;
+use super::read_u32_from_offset;
 
 pub(crate) fn parse_serial(data: &[u8]) -> String {
     data.iter()
@@ -11,9 +11,9 @@ pub(crate) fn parse_serial(data: &[u8]) -> String {
 pub(crate) fn parse_firmware(data: &[u8]) -> Option<String> {
     let record = data.as_chunks::<16>().0.get(3)?;
 
-    let maj_min = read_u32(record, 0)?;
-    let revision = read_u32(record, 4)?;
-    let build = read_u32(record, 8)?;
+    let maj_min = read_u32_from_offset(record, 0)?;
+    let revision = read_u32_from_offset(record, 4)?;
+    let build = read_u32_from_offset(record, 8)?;
     let maj = maj_min >> 16;
     let min = maj_min & 0xffff;
 
@@ -21,7 +21,7 @@ pub(crate) fn parse_firmware(data: &[u8]) -> Option<String> {
 }
 
 pub(crate) fn parse_status(data: &[u8]) -> Option<u32> {
-    read_u32(data, 0)
+    read_u32_from_offset(data, 0)
 }
 
 #[cfg(test)]

@@ -9,7 +9,7 @@ use log::{debug, warn};
 use nusb::transfer::{Buffer, Bulk, In, Out};
 use nusb::{Endpoint, Interface};
 
-use super::{Command, read_u32};
+use super::{Command, read_u32_from_offset};
 use crate::error::{self, Error};
 use crate::usb::TIMEOUT;
 
@@ -74,7 +74,7 @@ impl CommandTransaction {
             return Err(Error::MissingResponseComplete);
         }
 
-        if let Some(complete_seq) = read_u32(&complete, 4)
+        if let Some(complete_seq) = read_u32_from_offset(&complete, 4)
             && complete_seq != seq
         {
             warn!("response complete has sequence {complete_seq}, expected {seq}");
@@ -115,7 +115,7 @@ impl CommandTransaction {
 
     fn is_response_complete(bytes: &[u8]) -> bool {
         bytes.len() == Self::RESPONSE_COMPLETE_LEN
-            && read_u32(bytes, 0) == Some(Self::RESPONSE_COMPLETE_MAGIC)
+            && read_u32_from_offset(bytes, 0) == Some(Self::RESPONSE_COMPLETE_MAGIC)
     }
 }
 

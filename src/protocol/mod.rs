@@ -8,7 +8,7 @@ pub(crate) use command::Command;
 pub(crate) use transaction::CommandTransaction;
 
 /// Reads a little-endian u32 at `offset`, or `None` if `bytes` is too short.
-fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+pub(crate) fn read_u32_from_offset(bytes: &[u8], offset: usize) -> Option<u32> {
     let word = bytes.get(offset..)?.first_chunk::<4>()?;
     Some(u32::from_le_bytes(*word))
 }

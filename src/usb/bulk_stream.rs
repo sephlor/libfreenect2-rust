@@ -8,6 +8,7 @@ use nusb::transfer::{Bulk, In, TransferError};
 use nusb::{Endpoint, Interface};
 
 use crate::error::{self};
+use crate::rgb::RgbStreamParser;
 use crate::usb::TIMEOUT;
 
 #[derive(Debug)]
@@ -24,6 +25,8 @@ impl BulkStream {
 
     pub(crate) fn start(interface: &Interface) -> error::Result<Self> {
         let mut endpoint = interface.endpoint::<Bulk, In>(Self::EP_IN)?;
+        // mut?
+        let parser = RgbStreamParser::new();
 
         while endpoint.pending() < Self::NUM_XFERS {
             let buffer = endpoint.allocate(Self::XFER_SIZE);
@@ -34,7 +37,7 @@ impl BulkStream {
 
         let handle = thread::Builder::new().name("usb".into()).spawn({
             let running = running.clone();
-            move || run(endpoint, running)
+            move || run(endpoint, parser, running)
         })?;
 
         Ok(Self {
@@ -64,7 +67,7 @@ impl Drop for BulkStream {
     }
 }
 
-fn run(mut endpoint: Endpoint<Bulk, In>, running: Arc<AtomicBool>) {
+fn run(mut endpoint: Endpoint<Bulk, In>, mut parser: RgbStreamParser, running: Arc<AtomicBool>) {
     let mut bytes = 0;
     let mut window_start = Instant::now();
 
@@ -76,7 +79,7 @@ fn run(mut endpoint: Endpoint<Bulk, In>, running: Arc<AtomicBool>) {
 
         match completion.status {
             Ok(()) => {
-                // Section 6: hand &completion.buffer[..] to the parser here.
+                parser.parse_packets(&completion.buffer);
                 bytes += completion.buffer.len();
             }
             Err(TransferError::Cancelled) => {

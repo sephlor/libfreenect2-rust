@@ -1,6 +1,7 @@
 mod error;
 mod kinect;
 mod protocol;
+mod rgb;
 mod usb;
 
 use kinect::Kinect;
@@ -27,7 +28,7 @@ fn run() -> error::Result<()> {
     let mut kinect = Kinect::open_default_device()?;
     kinect.start_rgb()?;
 
-    sleep(Duration::from_secs(15));
+    sleep(Duration::from_secs(5));
 
     kinect.stop()?;
 
