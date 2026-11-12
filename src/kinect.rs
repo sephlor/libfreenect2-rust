@@ -1,8 +1,9 @@
-use std::thread::sleep;
-use std::time::Duration;
-
+use cuda_core::MemPool;
 use log::{debug, error, info, warn};
 use nusb::DeviceInfo;
+use std::sync::Arc;
+use std::thread::sleep;
+use std::time::Duration;
 
 use crate::error::{self, Error};
 use crate::protocol::{Command, CommandTransaction, response};
@@ -56,7 +57,7 @@ impl Kinect {
         })
     }
 
-    pub fn start_rgb(&mut self) -> error::Result<()> {
+    pub fn start_rgb(&mut self, pool: Arc<MemPool>) -> error::Result<()> {
         match self.state {
             State::Closed => return Err(Error::DeviceClosed),
             State::Streaming => return Err(Error::AlreadyStreaming),
@@ -135,7 +136,7 @@ impl Kinect {
         self.state = State::Streaming;
         info!("streaming enabled");
 
-        let stream = BulkStream::start(self.usb.control_and_rgb_interface())?;
+        let stream = BulkStream::start(self.usb.control_and_rgb_interface(), pool)?;
         self.rgb_stream = Some(stream);
 
         Ok(())

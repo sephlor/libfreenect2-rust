@@ -3,6 +3,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use cuda_async::device_context::{init_device_contexts, set_device_pool};
+use cuda_core::MemPool;
 use log::{debug, error, info, warn};
 use nusb::transfer::{Bulk, In, TransferError};
 use nusb::{Endpoint, Interface};
@@ -23,7 +25,7 @@ impl BulkStream {
     const XFER_SIZE: usize = 0x4000;
     const NUM_XFERS: usize = 20;
 
-    pub(crate) fn start(interface: &Interface) -> error::Result<Self> {
+    pub(crate) fn start(interface: &Interface, pool: Arc<MemPool>) -> error::Result<Self> {
         let mut endpoint = interface.endpoint::<Bulk, In>(Self::EP_IN)?;
         // mut?
         let parser = RgbStreamParser::new();
@@ -37,7 +39,11 @@ impl BulkStream {
 
         let handle = thread::Builder::new().name("usb".into()).spawn({
             let running = running.clone();
-            move || run(endpoint, parser, running)
+            move || {
+                init_device_contexts(0, 1).expect("init failed (requires GPU)");
+                set_device_pool(0, pool).expect("set pool failed");
+                run(endpoint, parser, running)
+            }
         })?;
 
         Ok(Self {

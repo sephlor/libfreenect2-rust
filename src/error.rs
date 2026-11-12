@@ -9,6 +9,12 @@ pub enum Error {
     #[error("USB transfer error: {0}")]
     Transfer(#[from] nusb::transfer::TransferError),
 
+    #[error("CUDA driver error: {0}")]
+    CudaDriver(#[from] cuda_core::DriverError),
+
+    #[error("CUDA device error: {0}")]
+    CudaDevice(#[from] cuda_async::error::DeviceError),
+
     #[error("no Kinect device found")]
     NoDevice,
 
