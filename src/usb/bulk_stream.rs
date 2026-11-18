@@ -1,16 +1,15 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{SyncSender, TrySendError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use cuda_async::device_context::{init_device_contexts, set_device_pool};
-use cuda_core::MemPool;
 use log::{debug, error, info, warn};
 use nusb::transfer::{Bulk, In, TransferError};
 use nusb::{Endpoint, Interface};
 
 use crate::error::{self};
-use crate::rgb::RgbStreamParser;
+use crate::rgb::{JpegPacket, RgbStreamParser};
 use crate::usb::TIMEOUT;
 
 #[derive(Debug)]
@@ -25,10 +24,12 @@ impl BulkStream {
     const XFER_SIZE: usize = 0x4000;
     const NUM_XFERS: usize = 20;
 
-    pub(crate) fn start(interface: &Interface, pool: Arc<MemPool>) -> error::Result<Self> {
+    pub(crate) fn start(
+        interface: &Interface,
+        parser: RgbStreamParser,
+        packets: SyncSender<JpegPacket>,
+    ) -> error::Result<Self> {
         let mut endpoint = interface.endpoint::<Bulk, In>(Self::EP_IN)?;
-        // mut?
-        let parser = RgbStreamParser::new();
 
         while endpoint.pending() < Self::NUM_XFERS {
             let buffer = endpoint.allocate(Self::XFER_SIZE);
@@ -39,11 +40,7 @@ impl BulkStream {
 
         let handle = thread::Builder::new().name("usb".into()).spawn({
             let running = running.clone();
-            move || {
-                init_device_contexts(0, 1).expect("init failed (requires GPU)");
-                set_device_pool(0, pool).expect("set pool failed");
-                run(endpoint, parser, running)
-            }
+            move || run(endpoint, parser, running, packets)
         })?;
 
         Ok(Self {
@@ -73,7 +70,12 @@ impl Drop for BulkStream {
     }
 }
 
-fn run(mut endpoint: Endpoint<Bulk, In>, mut parser: RgbStreamParser, running: Arc<AtomicBool>) {
+fn run(
+    mut endpoint: Endpoint<Bulk, In>,
+    mut parser: RgbStreamParser,
+    running: Arc<AtomicBool>,
+    packets: SyncSender<JpegPacket>,
+) {
     let mut bytes = 0;
     let mut window_start = Instant::now();
 
@@ -85,7 +87,16 @@ fn run(mut endpoint: Endpoint<Bulk, In>, mut parser: RgbStreamParser, running: A
 
         match completion.status {
             Ok(()) => {
-                parser.parse_packets(&completion.buffer);
+                if let Some(packet) = parser.parse_packets(&completion.buffer) {
+                    match packets.try_send(packet) {
+                        Err(TrySendError::Disconnected(_)) => {
+                            error!("receiver disconnected, stopping");
+                            break;
+                        }
+                        Err(TrySendError::Full(_)) => debug!("receiver full, dropping frame"),
+                        Ok(()) => {}
+                    }
+                }
                 bytes += completion.buffer.len();
             }
             Err(TransferError::Cancelled) => {

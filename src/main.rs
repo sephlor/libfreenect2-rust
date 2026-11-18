@@ -1,15 +1,17 @@
-use cuda_async::device_context::{init_device_contexts, with_device};
-use cuda_core::sys;
 use log::error;
-use std::{process::ExitCode, thread::sleep, time::Duration};
+use std::{process::ExitCode, sync::mpsc};
 
+mod buffer;
 mod error;
 mod kinect;
-mod pinned;
+mod pool;
 mod protocol;
 mod rgb;
 mod usb;
 use kinect::Kinect;
+use rgb::JpegPacket;
+
+use crate::{pool::HostPool, rgb::RgbStreamParser};
 
 fn main() -> ExitCode {
     env_logger::Builder::new()
@@ -28,21 +30,23 @@ fn main() -> ExitCode {
 }
 
 fn run() -> error::Result<()> {
-    init_device_contexts(0, 1).expect("init failed (requires GPU)");
+    let pool = HostPool::new()?;
 
-    // SAFETY: CUmemPoolProps is a plain C struct; all-zero is a valid starting value.
-    let mut props: sys::CUmemPoolProps = unsafe { std::mem::zeroed() };
-    props.allocType = sys::CUmemAllocationType_enum_CU_MEM_ALLOCATION_TYPE_PINNED;
-    props.handleTypes = sys::CUmemAllocationHandleType_enum_CU_MEM_HANDLE_TYPE_NONE;
-    props.location.type_ = sys::CUmemLocationType_enum_CU_MEM_LOCATION_TYPE_HOST;
+    let parser = RgbStreamParser::new(pool);
 
-    let pool = with_device(0, |device| device.new_mem_pool_with_params(props))??;
-    pool.set_release_threshold(u64::MAX)?;
+    let (packet_tx, packet_rx) = mpsc::sync_channel::<JpegPacket>(1);
 
     let mut kinect = Kinect::open_default_device()?;
-    kinect.start_rgb(pool)?;
 
-    sleep(Duration::from_secs(5));
+    // TODO: pass a closure instead?
+    kinect.start_rgb(parser, packet_tx)?;
+
+    for pkt in packet_rx.iter().take(5) {
+        std::fs::write(
+            format!("output/frame_{:05}.jpg", pkt.sequence()),
+            pkt.jpeg_data(),
+        )?;
+    }
 
     kinect.stop()?;
 

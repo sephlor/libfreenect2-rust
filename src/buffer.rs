@@ -1,31 +1,36 @@
 //! Fixed-capacity byte buffer backed by pinned host memory from a CUDA memory pool.
-use cuda_async::device_operation::ExecutionContext;
-use cuda_core::{DriverError, Stream, free_async, sys};
+use cuda_core::{DriverError, MemPool, Stream, free_async, malloc_from_pool_async, sys};
 
 use std::{ops::Deref, slice, sync::Arc};
+
+use crate::pool::HostPool;
 
 /// Owns a fixed-capacity buffer of pinned host memory from a CUDA memory pool.
 ///
 /// Behaves like a `Vec<u8>` that can't grow past `capacity`.
-pub(crate) struct PinnedBuffer {
-    ptr: *mut u8,
+pub(crate) struct Buffer {
+    pub(crate) ptr: *mut u8,
     len: usize,
     capacity: usize,
     stream: Arc<Stream>,
+    _mempool: Arc<MemPool>,
 }
 
-impl PinnedBuffer {
-    pub(crate) fn new(stream: Arc<Stream>, capacity: usize) -> Result<Self, DriverError> {
-        let ctx = ExecutionContext::new(Arc::clone(&stream));
-        // SAFETY: `stream` and `pool` are live handles held by Arcs.
-        let dptr = unsafe { ctx.alloc_async(capacity) }.expect("device allocation failed");
-        // The allocation is stream-ordered; wait for it before the CPU touches it.
+impl Buffer {
+    pub(crate) fn new(pool: HostPool, capacity: usize) -> Result<Self, DriverError> {
+        let _mempool = pool.mempool;
+        let stream = pool.stream;
+        // SAFETY: `pool` and `stream` are live handles held by Arcs, and both
+        // belong to the same context (the caller builds them together).
+        let dptr = unsafe { malloc_from_pool_async(capacity, &_mempool, &stream) }?;
+
         stream.synchronize()?;
         Ok(Self {
             ptr: dptr as *mut u8,
             len: 0,
             capacity,
-            stream: Arc::clone(&stream),
+            stream,
+            _mempool,
         })
     }
 
@@ -40,7 +45,6 @@ impl PinnedBuffer {
         unsafe {
             let cu_result = sys::cuMemcpyAsync(
                 (self.ptr.addr() + self.len) as u64,
-                // self.ptr.add(self.len),
                 src.as_ptr().addr() as u64,
                 src.len(),
                 self.stream.cu_stream(),
@@ -61,18 +65,12 @@ impl PinnedBuffer {
         self.len = self.len.min(new_len);
     }
 
-    // pub(crate) fn as_slice(&self) -> &[u8] {
-    //     // SAFETY: ptr is valid host memory for `capacity` bytes (pinned host pool),
-    //     // and the first `len` bytes have been written.
-    //     unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
-    // }
-
     pub(crate) fn len(&self) -> usize {
         self.len
     }
 }
 
-impl Deref for PinnedBuffer {
+impl Deref for Buffer {
     type Target = [u8];
 
     #[inline]
@@ -82,13 +80,13 @@ impl Deref for PinnedBuffer {
     }
 }
 
-impl AsRef<[u8]> for PinnedBuffer {
+impl AsRef<[u8]> for Buffer {
     fn as_ref(&self) -> &[u8] {
         self.deref()
     }
 }
 
-impl Drop for PinnedBuffer {
+impl Drop for Buffer {
     fn drop(&mut self) {
         // SAFETY: ptr came from malloc_from_pool_async on this stream and is freed only here.
         let _ = unsafe { free_async(self.ptr as sys::CUdeviceptr, &self.stream) };
@@ -97,4 +95,4 @@ impl Drop for PinnedBuffer {
 
 // SAFETY: the buffer has a single owner and the raw pointer is never shared,
 // so moving it to another thread is fine.
-unsafe impl Send for PinnedBuffer {}
+unsafe impl Send for Buffer {}

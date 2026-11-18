@@ -3,12 +3,10 @@
 //! Output is compressed JPEG bytes, not decoded pixels.
 //!
 //! This is the same thing as RgbPacketStreamParser in libfreenect2.
-use cuda_async::device_context::with_device;
-use cuda_core::Stream;
-use log::{trace, warn};
-use std::sync::Arc;
+use log::{error, trace, warn};
 
-use crate::pinned::PinnedBuffer;
+use crate::buffer::Buffer;
+use crate::pool::HostPool;
 use crate::protocol::read_u32_from_offset;
 
 const MAGIC_JPEG: u32 = 0x42424242; // decimal: 66,66,66,66 // ASCII: BBBB
@@ -21,7 +19,7 @@ const RGB_FOOTER_SIZE: usize = size_of::<RawRgbPacketFooter>(); // 56
 /// per packet, along with its sequence, timestamp, and exposure metadata.
 pub(crate) struct RgbStreamParser {
     packet: Option<JpegPacket>,
-    stream: Arc<Stream>,
+    pool: HostPool,
 }
 
 #[repr(C)]
@@ -46,46 +44,52 @@ struct RawRgbPacketFooter {
     unknown4: [u32; 3], // seems to be 0 all the time
 }
 
-struct JpegPacket {
+pub(crate) struct JpegPacket {
     sequence: u32,
     timestamp: u32,
-    jpeg_data: PinnedBuffer,
+    jpeg_data: Buffer,
     jpeg_data_length: usize,
     exposure: f32,
     gain: f32,
     gamma: f32,
 }
 
+impl JpegPacket {
+    pub(crate) fn sequence(&self) -> &u32 {
+        &self.sequence
+    }
+
+    pub(crate) fn jpeg_data(&self) -> &[u8] {
+        &self.jpeg_data
+    }
+}
+
 impl RgbStreamParser {
     // const BUFFER_SIZE: usize = 0x200000; // 2 MB // 2*1024*1024
     const BUFFER_SIZE: usize = 0x400000; // 4 MB // 4*1024*1024
 
-    pub(crate) fn new() -> Self {
-        Self {
-            packet: None,
-            stream: with_device(0, |device| device.new_stream())
-                .unwrap()
-                .unwrap(),
-        }
+    pub(crate) fn new(pool: HostPool) -> Self {
+        Self { packet: None, pool }
     }
 
-    pub(crate) fn parse_packets(&mut self, data: &[u8]) {
+    pub(crate) fn parse_packets(&mut self, data: &[u8]) -> Option<JpegPacket> {
         if self.packet.is_none() {
             // first two words in RawRgbPacketHeader, so 0 and 4 offsets
-            let (Some(sequence), Some(magic_jpeg)) =
+            if let (Some(sequence), Some(magic_jpeg)) =
                 (read_u32_from_offset(data, 0), read_u32_from_offset(data, 4))
-            else {
-                return;
-            };
-
-            if magic_jpeg == MAGIC_JPEG {
-                let mut jpeg_data =
-                    // TODO: return a result and fix upstream fns
-                    PinnedBuffer::new(self.stream.clone(), Self::BUFFER_SIZE).unwrap();
+                && magic_jpeg == MAGIC_JPEG
+            {
+                let mut jpeg_data = match Buffer::new(self.pool.clone(), Self::BUFFER_SIZE) {
+                    Ok(buffer) => buffer,
+                    Err(e) => {
+                        error!("buffer failed: {e}");
+                        return None;
+                    }
+                };
 
                 if !jpeg_data.extend_from_slice(&data[RGB_HEADER_SIZE..]) {
                     warn!("buffer overflow!");
-                    return;
+                    return None;
                 }
                 self.packet = Some(JpegPacket {
                     sequence,
@@ -99,9 +103,9 @@ impl RgbStreamParser {
             }
         } else if let Some(mut packet) = self.packet.take() {
             if let Some(footer) = RawRgbPacketFooter::from_bytes(data) {
-                let _jpeg_packet = Self::get_jpeg_packet(packet, data, footer);
-
-                // TODO: send packet
+                if let Some(jpeg_packet) = Self::complete_packet(packet, data, footer) {
+                    return Some(jpeg_packet);
+                }
             } else {
                 if packet.jpeg_data.extend_from_slice(data) {
                     self.packet.replace(packet);
@@ -110,9 +114,10 @@ impl RgbStreamParser {
                 }
             }
         }
+        None
     }
 
-    fn get_jpeg_packet(
+    fn complete_packet(
         mut packet: JpegPacket,
         data: &[u8],
         footer: RawRgbPacketFooter,
@@ -201,3 +206,5 @@ impl RawRgbPacketFooter {
         }
     }
 }
+
+// TODO: add unit tests
