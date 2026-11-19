@@ -1,17 +1,21 @@
-use log::error;
+use std::thread;
 use std::{process::ExitCode, sync::mpsc};
 
+use log::error;
+
+use crate::decode::Frame;
+use crate::kinect::Kinect;
+use crate::pool::HostPool;
+use crate::rgb::{JpegPacket, RgbStreamParser};
+
 mod buffer;
+mod decode;
 mod error;
 mod kinect;
 mod pool;
 mod protocol;
 mod rgb;
 mod usb;
-use kinect::Kinect;
-use rgb::JpegPacket;
-
-use crate::{pool::HostPool, rgb::RgbStreamParser};
 
 fn main() -> ExitCode {
     env_logger::Builder::new()
@@ -41,14 +45,19 @@ fn run() -> error::Result<()> {
     // TODO: pass a closure instead?
     kinect.start_rgb(parser, packet_tx)?;
 
-    for pkt in packet_rx.iter().take(5) {
-        std::fs::write(
-            format!("output/frame_{:05}.jpg", pkt.sequence()),
-            pkt.jpeg_data(),
-        )?;
-    }
+    let (frame_tx, frame_rx) = mpsc::sync_channel::<Frame>(1);
+
+    let decode_thread = thread::Builder::new()
+        .name("decode".into())
+        .spawn(move || decode::run(packet_rx, frame_tx))?;
+
+    // pass frame_rx and render
 
     kinect.stop()?;
+
+    if decode_thread.join().is_err() {
+        error!("decode thread panicked");
+    }
 
     kinect.close()?;
 

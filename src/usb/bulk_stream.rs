@@ -93,7 +93,7 @@ fn run(
                             error!("receiver disconnected, stopping");
                             break;
                         }
-                        Err(TrySendError::Full(_)) => debug!("receiver full, dropping frame"),
+                        Err(TrySendError::Full(_)) => debug!("receiver full, dropping packet"),
                         Ok(()) => {}
                     }
                 }

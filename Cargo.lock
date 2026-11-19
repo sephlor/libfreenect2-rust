@@ -68,6 +68,81 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "baracuda-build"
+version = "0.1.0-alpha.148"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c50f2547d7c086453d5e9dd77afc858c73e520b08bcc7900aa863c538f7a616"
+
+[[package]]
+name = "baracuda-core"
+version = "0.1.0-alpha.148"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccee34adac3167822639f68ff0a0f37908db503abda446f867f20050b79c3042"
+dependencies = [
+ "baracuda-types",
+ "libloading 0.9.1",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "baracuda-cuda-sys"
+version = "0.1.0-alpha.148"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ba8f68a0bfdab440bb2b9f2b923cf42189eec128e3e83fe2161fb9d9cc4929c"
+dependencies = [
+ "baracuda-build",
+ "baracuda-core",
+ "baracuda-types",
+]
+
+[[package]]
+name = "baracuda-driver"
+version = "0.1.0-alpha.148"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ae303c9a2f863e6039c9c243848b0cdbd9aaf1dc3e523705dd3ba6a51ef829d"
+dependencies = [
+ "baracuda-core",
+ "baracuda-cuda-sys",
+ "baracuda-types",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "baracuda-nvjpeg"
+version = "0.1.0-alpha.148"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d93146fff75cd4c1af107a8da4071c034db69b81731078277980cc0ac909ef7c"
+dependencies = [
+ "baracuda-core",
+ "baracuda-cuda-sys",
+ "baracuda-driver",
+ "baracuda-nvjpeg-sys",
+ "baracuda-types",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "baracuda-nvjpeg-sys"
+version = "0.1.0-alpha.148"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8aa61b68152a1f7db45ba9cbbd16271452a2c16da36515c08adfd9ea2cd8b848"
+dependencies = [
+ "baracuda-build",
+ "baracuda-core",
+ "baracuda-cuda-sys",
+ "baracuda-types",
+]
+
+[[package]]
+name = "baracuda-types"
+version = "0.1.0-alpha.148"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d1404eaf9ef990d10175e2e6971f43df2452025fd1a7fe499246f77789a6d3a"
+dependencies = [
+ "unpopped-vocab",
+]
+
+[[package]]
 name = "bindgen"
 version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -148,7 +223,7 @@ checksum = "157a8ba7b480713b56f4c09fd13fc3e0a22a5dfab8097ba61cbc5feef950788a"
 dependencies = [
  "glob",
  "libc",
- "libloading",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -216,7 +291,7 @@ version = "0.5.0"
 source = "git+https://github.com/sephlor/cuda-rust.git?branch=new_mem_pool_with_params#7a35f09633edff7d10a9fe2555bfa98cf534d955"
 dependencies = [
  "bindgen",
- "libloading",
+ "libloading 0.8.9",
  "prettyplease",
  "proc-macro2",
  "quote",
@@ -340,6 +415,15 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys",
+]
+
+[[package]]
+name = "float8"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2d1f04709a8ac06e8e8042875a3c466cc4832d3c1a18dbcb9dba3c6e83046bc"
+dependencies = [
+ "half",
 ]
 
 [[package]]
@@ -568,6 +652,8 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 name = "libfreenect2-rust"
 version = "0.1.0"
 dependencies = [
+ "baracuda-driver",
+ "baracuda-nvjpeg",
  "cuda-async",
  "cuda-core",
  "env_logger",
@@ -581,6 +667,16 @@ name = "libloading"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
+
+[[package]]
+name = "libloading"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1832accd5a4ca2795ace4d05d15c4039be15b62d3b950eff99746a990e3cc10"
 dependencies = [
  "cfg-if",
  "windows-link",
@@ -938,6 +1034,16 @@ name = "unicode-ident"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
+
+[[package]]
+name = "unpopped-vocab"
+version = "0.47.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a25cf53ea3814093711ab8a540447029e88c65f9858b61f550ea28f3290dd82e"
+dependencies = [
+ "float8",
+ "half",
+]
 
 [[package]]
 name = "utf8parse"
