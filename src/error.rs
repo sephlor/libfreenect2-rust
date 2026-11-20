@@ -15,6 +15,9 @@ pub enum Error {
     #[error("CUDA device error: {0}")]
     CudaDevice(#[from] cuda_async::error::DeviceError),
 
+    #[error("SDL error: {0}")]
+    Sdl(String),
+
     #[error("no Kinect device found")]
     NoDevice,
 

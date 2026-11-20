@@ -4,6 +4,7 @@ use std::{process::ExitCode, sync::mpsc};
 use log::error;
 
 use crate::decode::Frame;
+use crate::error::Error;
 use crate::kinect::Kinect;
 use crate::pool::HostPool;
 use crate::rgb::{JpegPacket, RgbStreamParser};
@@ -14,6 +15,7 @@ mod error;
 mod kinect;
 mod pool;
 mod protocol;
+mod render;
 mod rgb;
 mod usb;
 
@@ -51,7 +53,7 @@ fn run() -> error::Result<()> {
         .name("decode".into())
         .spawn(move || decode::run(packet_rx, frame_tx))?;
 
-    // pass frame_rx and render
+    let render_result = render::run(frame_rx);
 
     kinect.stop()?;
 
@@ -61,5 +63,5 @@ fn run() -> error::Result<()> {
 
     kinect.close()?;
 
-    Ok(())
+    render_result.map_err(Error::Sdl)
 }

@@ -26,4 +26,6 @@ RUN export DEBIAN_FRONTEND=noninteractive \
     # GLEW dependencies
     libglvnd0 libgl1 libglx0 libegl1 libgles2 libglu1-mesa \
     # for libfreenect2
-    libusb-1.0-0-dev libturbojpeg0-dev libglfw3-dev
+    libusb-1.0-0-dev libturbojpeg0-dev libglfw3-dev \
+    # for libfreenect2-rust sdl2 rendering
+    libsdl2-dev
