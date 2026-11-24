@@ -5,8 +5,7 @@
 //! This is the same thing as RgbPacketStreamParser in libfreenect2.
 use log::{error, trace, warn};
 
-use crate::buffer::Buffer;
-use crate::pool::HostPool;
+use crate::host_memory::{HostBuffer, HostPool};
 use crate::protocol::read_u32_from_offset;
 
 const MAGIC_JPEG: u32 = 0x42424242; // decimal: 66,66,66,66 // ASCII: BBBB
@@ -47,7 +46,7 @@ struct RawRgbPacketFooter {
 pub(crate) struct JpegPacket {
     sequence: u32,
     timestamp: u32,
-    jpeg_data: Buffer,
+    jpeg_data: HostBuffer,
     jpeg_data_length: usize,
     exposure: f32,
     gain: f32,
@@ -79,7 +78,7 @@ impl RgbStreamParser {
                 (read_u32_from_offset(data, 0), read_u32_from_offset(data, 4))
                 && magic_jpeg == MAGIC_JPEG
             {
-                let mut jpeg_data = match Buffer::new(self.pool.clone(), Self::BUFFER_SIZE) {
+                let mut jpeg_data = match self.pool.alloc(Self::BUFFER_SIZE) {
                     Ok(buffer) => buffer,
                     Err(e) => {
                         error!("buffer failed: {e}");

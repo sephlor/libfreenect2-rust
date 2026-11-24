@@ -1,25 +1,57 @@
-//! Fixed-capacity byte buffer backed by pinned host memory from a CUDA memory pool.
-use cuda_core::{DriverError, MemPool, Stream, free_async, malloc_from_pool_async, sys};
-
+//! Pinned host memory from a CUDA memory pool, used with the `cuda` feature.
 use std::{ops::Deref, slice, sync::Arc};
 
-use crate::pool::HostPool;
+use cuda_async::device_context::{init_device_contexts, with_device};
+use cuda_core::{MemPool, Stream, free_async, malloc_from_pool_async, sys};
+
+use crate::error;
+
+#[derive(Clone)]
+pub(crate) struct HostPool {
+    mempool: Arc<MemPool>,
+    stream: Arc<Stream>,
+}
+
+impl HostPool {
+    pub(crate) fn new() -> error::Result<Self> {
+        init_device_contexts(0, 1).expect("init failed (requires GPU)");
+
+        // SAFETY: CUmemPoolProps is a plain C struct; all-zero is a valid starting value.
+        let mut props: sys::CUmemPoolProps = unsafe { std::mem::zeroed() };
+        props.allocType = sys::CUmemAllocationType_enum_CU_MEM_ALLOCATION_TYPE_PINNED;
+        props.handleTypes = sys::CUmemAllocationHandleType_enum_CU_MEM_HANDLE_TYPE_NONE;
+        props.location.type_ = sys::CUmemLocationType_enum_CU_MEM_LOCATION_TYPE_HOST;
+
+        let mempool = with_device(0, |device| device.new_mem_pool_with_params(props))??;
+        mempool.set_release_threshold(u64::MAX)?;
+
+        let stream = with_device(0, |device| device.new_stream())
+            .unwrap()
+            .unwrap();
+
+        Ok(Self { mempool, stream })
+    }
+
+    pub(crate) fn alloc(&self, capacity: usize) -> error::Result<HostBuffer> {
+        HostBuffer::new(self, capacity)
+    }
+}
 
 /// Owns a fixed-capacity buffer of pinned host memory from a CUDA memory pool.
 ///
 /// Behaves like a `Vec<u8>` that can't grow past `capacity`.
-pub(crate) struct Buffer {
-    pub(crate) ptr: *mut u8,
+pub(crate) struct HostBuffer {
+    ptr: *mut u8,
     len: usize,
     capacity: usize,
     stream: Arc<Stream>,
     _mempool: Arc<MemPool>,
 }
 
-impl Buffer {
-    pub(crate) fn new(pool: HostPool, capacity: usize) -> Result<Self, DriverError> {
-        let _mempool = pool.mempool;
-        let stream = pool.stream;
+impl HostBuffer {
+    fn new(pool: &HostPool, capacity: usize) -> error::Result<Self> {
+        let _mempool = pool.mempool.clone();
+        let stream = pool.stream.clone();
         // SAFETY: `pool` and `stream` are live handles held by Arcs, and both
         // belong to the same context (the caller builds them together).
         let dptr = unsafe { malloc_from_pool_async(capacity, &_mempool, &stream) }?;
@@ -70,7 +102,7 @@ impl Buffer {
     }
 }
 
-impl Deref for Buffer {
+impl Deref for HostBuffer {
     type Target = [u8];
 
     #[inline]
@@ -80,13 +112,13 @@ impl Deref for Buffer {
     }
 }
 
-impl AsRef<[u8]> for Buffer {
+impl AsRef<[u8]> for HostBuffer {
     fn as_ref(&self) -> &[u8] {
         self.deref()
     }
 }
 
-impl Drop for Buffer {
+impl Drop for HostBuffer {
     fn drop(&mut self) {
         // SAFETY: ptr came from malloc_from_pool_async on this stream and is freed only here.
         let _ = unsafe { free_async(self.ptr as sys::CUdeviceptr, &self.stream) };
@@ -95,4 +127,4 @@ impl Drop for Buffer {
 
 // SAFETY: the buffer has a single owner and the raw pointer is never shared,
 // so moving it to another thread is fine.
-unsafe impl Send for Buffer {}
+unsafe impl Send for HostBuffer {}

@@ -9,9 +9,11 @@ pub enum Error {
     #[error("USB transfer error: {0}")]
     Transfer(#[from] nusb::transfer::TransferError),
 
+    #[cfg(feature = "cuda")]
     #[error("CUDA driver error: {0}")]
     CudaDriver(#[from] cuda_core::DriverError),
 
+    #[cfg(feature = "cuda")]
     #[error("CUDA device error: {0}")]
     CudaDevice(#[from] cuda_async::error::DeviceError),
 

@@ -4,15 +4,14 @@ use std::{process::ExitCode, sync::mpsc};
 use log::error;
 
 use crate::decode::Frame;
+use crate::host_memory::HostPool;
 use crate::kinect::Kinect;
-use crate::pool::HostPool;
 use crate::rgb::{JpegPacket, RgbStreamParser};
 
-mod buffer;
 mod decode;
 mod error;
+mod host_memory;
 mod kinect;
-mod pool;
 mod protocol;
 mod render;
 mod rgb;

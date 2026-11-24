@@ -1,7 +1,9 @@
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::time::Instant;
 
+#[cfg(feature = "cuda")]
 use baracuda_driver::{Context, Device, DeviceBuffer, PrimaryContext};
+#[cfg(feature = "cuda")]
 use baracuda_nvjpeg::{Handle, PixelFormat, State, decode_interleaved};
 use log::{debug, error, warn};
 use zune_jpeg::JpegDecoder;
@@ -19,6 +21,7 @@ pub(crate) struct Frame {
 }
 
 #[allow(dead_code)]
+#[cfg(feature = "cuda")]
 pub(crate) fn run_gpu(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) {
     // TODO: do something besides unwrap
     let device = Device::get(0).unwrap();
@@ -78,6 +81,7 @@ pub(crate) fn run_gpu(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) 
 }
 
 // Option to decode on CPU for performance comparison
+#[allow(dead_code)]
 pub(crate) fn run_cpu(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) {
     let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
     let mut dropped = 0u64;
@@ -113,7 +117,10 @@ pub(crate) fn run_cpu(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) 
                 dropped += 1;
                 debug!("decode: dropped frame ({dropped} total)");
             }
-            Err(TrySendError::Disconnected(_)) => break,
+            Err(TrySendError::Disconnected(_)) => {
+                error!("receiver disconnected, stopping");
+                break;
+            }
         }
     }
     debug!("decode thread done, dropped {dropped} frames");

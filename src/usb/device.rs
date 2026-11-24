@@ -65,7 +65,7 @@ impl KinectUsb {
                 if dev.serial_number().is_none() {
                     warn!(
                         "skipping Kinect at bus {} addr {}: no serial number",
-                        dev.busnum(),
+                        dev.bus_id(),
                         dev.device_address()
                     );
                     return false;
@@ -155,7 +155,7 @@ fn describe(info: &DeviceInfo) -> String {
     format!(
         "{} (bus {} addr {})",
         info.serial_number().unwrap_or("unknown"),
-        info.busnum(),
+        info.bus_id(),
         info.device_address()
     )
 }
