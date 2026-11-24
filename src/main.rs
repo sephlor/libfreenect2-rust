@@ -50,7 +50,7 @@ fn run() -> error::Result<()> {
 
     let decode_thread = thread::Builder::new()
         .name("decode".into())
-        .spawn(move || decode::run(packet_rx, frame_tx))?;
+        .spawn(move || decode::run_cpu(packet_rx, frame_tx))?;
 
     let render_result = render::run(frame_rx);
 
