@@ -15,6 +15,10 @@ pub enum Error {
     #[error("CUDA device error: {0}")]
     CudaDevice(#[from] cuda_async::error::DeviceError),
 
+    #[cfg(feature = "cuda")]
+    #[error("nvJPEG call failed with status {0}")]
+    NvJpeg(core::ffi::c_int),
+
     #[error("no Kinect device found")]
     NoDevice,
 
