@@ -40,6 +40,24 @@ pub(crate) const NVJPEG_CSS_GRAY: nvjpegChromaSubsampling_t = 6;
 pub(crate) const NVJPEG_CSS_410V: nvjpegChromaSubsampling_t = 7;
 pub(crate) const NVJPEG_CSS_UNKNOWN: nvjpegChromaSubsampling_t = -1;
 
+/// `nvjpegOutputFormat_t`, nvjpeg.h:123. Only the formats used so far.
+pub(crate) type nvjpegOutputFormat_t = c_int;
+/// Interleaved RGB, written to `channel[0]` only.
+pub(crate) const NVJPEG_OUTPUT_RGBI: nvjpegOutputFormat_t = 5;
+
+/// `nvjpegImage_t`, nvjpeg.h:220. Output plane pointers and row pitches.
+/// Interleaved formats use index 0 only. Field order and types must match
+/// the header exactly; a mismatch compiles and then corrupts memory.
+#[repr(C)]
+pub(crate) struct nvjpegImage_t {
+    pub(crate) channel: [*mut u8; NVJPEG_MAX_COMPONENT],
+    pub(crate) pitch: [usize; NVJPEG_MAX_COMPONENT],
+}
+
+/// `cudaStream_t`. The runtime and driver stream types are the same pointer,
+/// so cuda-core's `CUstream` is passed straight through.
+pub(crate) type cudaStream_t = cuda_core::sys::CUstream;
+
 // Opaque C structs: their layout is private to nvJPEG, so Rust only ever holds
 // pointers to them. A zero-sized struct per type (instead of `c_void`) means
 // the compiler rejects passing a state where a handle is expected. The
@@ -96,5 +114,16 @@ unsafe extern "C" {
         subsampling: *mut nvjpegChromaSubsampling_t,
         widths: *mut c_int,
         heights: *mut c_int,
+    ) -> nvjpegStatus_t;
+
+    /// nvjpeg.h:400. Single-image decode with the default backend.
+    pub(crate) fn nvjpegDecode(
+        handle: nvjpegHandle_t,
+        jpeg_handle: nvjpegJpegState_t,
+        data: *const u8,
+        length: usize,
+        output_format: nvjpegOutputFormat_t,
+        destination: *mut nvjpegImage_t,
+        stream: cudaStream_t,
     ) -> nvjpegStatus_t;
 }

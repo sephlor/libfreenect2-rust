@@ -1,13 +1,16 @@
 //! Safe wrapper over the hand-written nvJPEG bindings in `sys`.
 use core::ffi::c_int;
-use core::marker::PhantomData;
 use core::ptr;
 
+use cuda_core::{DeviceBuffer, Stream};
 use log::warn;
 
 use crate::error::{Error, Result};
 
 mod sys;
+
+/// Bytes per pixel of `NVJPEG_OUTPUT_RGBI`.
+pub(crate) const RGB_BYTES_PER_PIXEL: usize = 3;
 
 /// Turns an nvJPEG status into a `Result`.
 fn check(status: sys::nvjpegStatus_t) -> Result<()> {
@@ -122,12 +125,14 @@ impl Drop for Handle {
 
 /// Per-decode state (`nvjpegJpegState_t`), created from a [`Handle`].
 ///
-/// The `'h` lifetime ties it to the handle, so the compiler rejects dropping
-/// the handle while a state still exists (the C API requires that order).
+/// Holding `&'h Handle` does two things: the compiler rejects dropping the
+/// handle while a state still exists (the C API requires that order), and
+/// `decode` always uses the handle this state was made from, so the two can't
+/// be mismatched.
 #[allow(dead_code)]
 pub(crate) struct State<'h> {
     raw: sys::nvjpegJpegState_t,
-    _handle: PhantomData<&'h Handle>,
+    handle: &'h Handle,
 }
 
 #[allow(dead_code)]
@@ -137,10 +142,81 @@ impl<'h> State<'h> {
         // SAFETY: `handle.raw` is a live handle (borrowed for 'h), and `raw` is
         // a writable out-pointer that receives the new state on success.
         check(unsafe { sys::nvjpegJpegStateCreate(handle.raw, &mut raw) })?;
-        Ok(Self {
-            raw,
-            _handle: PhantomData,
-        })
+        Ok(Self { raw, handle })
+    }
+
+    /// Decodes `jpeg` to interleaved RGB (3 bytes per pixel, rows packed with
+    /// no padding) at the start of `output`, on `stream`. Returns the header
+    /// info so the caller knows the image size.
+    ///
+    /// Blocks until the decode finishes. nvJPEG may still read `jpeg` and
+    /// write `output` from GPU work after `nvjpegDecode` returns, and the
+    /// borrows end when this function does, so it must not return early.
+    /// Overlapping decode with other work (events instead of a sync) is a
+    /// later step.
+    ///
+    /// `&mut self`: a state holds one decode's intermediate buffers, so two
+    /// decodes can't share it at once.
+    pub(crate) fn decode_rgbi(
+        &mut self,
+        jpeg: &[u8],
+        output: &mut DeviceBuffer<u8>,
+        stream: &Stream,
+    ) -> Result<ImageInfo> {
+        let info = self.handle.image_info(jpeg)?;
+        // C can't see Rust lengths, so this check is what keeps nvJPEG from
+        // writing past the end of `output`. checked_mul guards the math
+        // against a header that claims an absurd size.
+        let pitch = info.width.checked_mul(RGB_BYTES_PER_PIXEL);
+        let needed = pitch.and_then(|p| p.checked_mul(info.height));
+        let (Some(pitch), Some(needed)) = (pitch, needed) else {
+            return Err(Error::NvJpeg(sys::NVJPEG_STATUS_BAD_JPEG));
+        };
+        if output.len() < needed {
+            return Err(Error::OutputTooSmall {
+                needed,
+                got: output.len(),
+            });
+        }
+
+        let mut destination = sys::nvjpegImage_t {
+            channel: [ptr::null_mut(); sys::NVJPEG_MAX_COMPONENT],
+            pitch: [0; sys::NVJPEG_MAX_COMPONENT],
+        };
+        destination.channel[0] = output.cu_deviceptr() as *mut u8;
+        destination.pitch[0] = pitch;
+
+        // nvJPEG writes `output` behind cuda-core's back. A write lease tells
+        // cuda-core's access tracking about it, so it rejects a conflicting
+        // access to this buffer from another stream while the decode runs.
+        let _lease = output.storage().acquire(stream, true, false)?;
+        // nvJPEG goes through the CUDA runtime, which uses the context current
+        // on this thread. Make it the stream's context (the primary context).
+        stream.context().bind_to_thread()?;
+
+        // SAFETY: `self.raw` and `self.handle.raw` are live and belong
+        // together (see the struct docs). `jpeg` is valid for `jpeg.len()`
+        // bytes. `channel[0]` points to a device allocation of at least
+        // `needed` = pitch * height bytes (checked above) in the stream's
+        // context, and the other channels are unused for RGBI. `stream` is a
+        // live stream in the same context. The synchronize below keeps `jpeg`,
+        // `output` and the lease alive until the GPU work is done.
+        let status = unsafe {
+            sys::nvjpegDecode(
+                self.handle.raw,
+                self.raw,
+                jpeg.as_ptr(),
+                jpeg.len(),
+                sys::NVJPEG_OUTPUT_RGBI,
+                &mut destination,
+                stream.cu_stream(),
+            )
+        };
+        // Wait even if the call failed: it may have queued work before failing.
+        let synced = stream.synchronize();
+        check(status)?;
+        synced?;
+        Ok(info)
     }
 }
 
@@ -217,6 +293,91 @@ mod tests {
             handle.image_info(&jpeg_header(0, 0, &[0x21, 0x11, 0x11])),
             Err(Error::NvJpeg(_))
         ));
+    }
+
+    fn stream() -> std::sync::Arc<Stream> {
+        let context = cuda_core::Context::new(0).expect("no CUDA device 0");
+        context.new_stream().expect("failed to create stream")
+    }
+
+    #[test]
+    fn decode_rejects_small_output() {
+        let handle = Handle::new().expect("nvjpegCreateSimple failed");
+        let mut state = State::new(&handle).expect("nvjpegJpegStateCreate failed");
+        let stream = stream();
+        // The size check runs before nvjpegDecode, so a header is enough.
+        let header = jpeg_header(1920, 1080, &[0x21, 0x11, 0x11]);
+        let mut output = DeviceBuffer::<u8>::zeroed(&stream, 1920 * 1080 * 3 - 1).unwrap();
+        assert!(matches!(
+            state.decode_rgbi(&header, &mut output, &stream),
+            Err(Error::OutputTooSmall {
+                needed: 6_220_800,
+                got: 6_220_799
+            })
+        ));
+    }
+
+    /// Mean absolute difference per byte between two equal-length images.
+    fn mean_diff(a: &[u8], b: &[u8]) -> f64 {
+        assert_eq!(a.len(), b.len());
+        let total: u64 = a
+            .iter()
+            .zip(b)
+            .map(|(&x, &y)| u64::from(x.abs_diff(y)))
+            .sum();
+        total as f64 / a.len() as f64
+    }
+
+    /// Encodes a synthetic image in memory with 4:2:2 sampling like the
+    /// Kinect's, decodes it on the GPU, and compares against the source pixels
+    /// and against zune-jpeg. jpeg-encoder is a dev-dependency only.
+    #[test]
+    fn decode_matches_source_and_cpu_decoder() {
+        use jpeg_encoder::{ColorType, Encoder, SamplingFactor};
+        use zune_jpeg::JpegDecoder;
+        use zune_jpeg::zune_core::bytestream::ZCursor;
+        use zune_jpeg::zune_core::colorspace::ColorSpace;
+        use zune_jpeg::zune_core::options::DecoderOptions;
+
+        // Not square, so swapped width/height shows up. Each channel follows
+        // a different pattern (R across, G down, B constant), so swapped
+        // channels show up. Smooth gradients keep JPEG's loss small.
+        let (width, height) = (640, 360);
+        let source: Vec<u8> = (0..height)
+            .flat_map(|y| {
+                (0..width)
+                    .flat_map(move |x| [(x * 255 / width) as u8, (y * 255 / height) as u8, 64])
+            })
+            .collect();
+        let mut jpeg = Vec::new();
+        let mut encoder = Encoder::new(&mut jpeg, 95);
+        encoder.set_sampling_factor(SamplingFactor::F_2_1); // 4:2:2
+        encoder
+            .encode(&source, width as u16, height as u16, ColorType::Rgb)
+            .unwrap();
+
+        let handle = Handle::new().expect("nvjpegCreateSimple failed");
+        let mut state = State::new(&handle).expect("nvjpegJpegStateCreate failed");
+        let stream = stream();
+        let mut output = DeviceBuffer::<u8>::zeroed(&stream, source.len()).unwrap();
+        let info = state.decode_rgbi(&jpeg, &mut output, &stream).unwrap();
+        assert_eq!((info.width, info.height), (640, 360));
+        assert_eq!(info.subsampling, sys::NVJPEG_CSS_422);
+        let gpu = output.to_host_vec(&stream).unwrap();
+
+        let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
+        let cpu = JpegDecoder::new_with_options(ZCursor::new(&jpeg), options)
+            .decode()
+            .unwrap();
+
+        // JPEG is lossy, and the two decoders use different IDCT and chroma
+        // upsampling, so neither match is exact. Swapped channels, a wrong
+        // pitch or an undecoded (zeroed) buffer put the mean in the tens.
+        let vs_source = mean_diff(&gpu, &source);
+        let vs_cpu = mean_diff(&gpu, &cpu);
+        println!("mean diff: vs source {vs_source:.3}, vs zune-jpeg {vs_cpu:.3}");
+        assert!(vs_source < 2.0, "vs source: {vs_source:.3}");
+        assert!(vs_cpu < 1.0, "vs zune-jpeg: {vs_cpu:.3}");
     }
 
     #[test]
