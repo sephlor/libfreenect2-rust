@@ -5,10 +5,10 @@ use crate::error;
 
 /// Stand-in for the CUDA pool. There's nothing to manage, so it holds no state.
 #[derive(Clone)]
-pub(crate) struct HostPool;
+pub struct HostPool;
 
 impl HostPool {
-    pub(crate) fn new() -> error::Result<Self> {
+    pub fn new() -> error::Result<Self> {
         Ok(Self)
     }
 

@@ -1,5 +1,7 @@
 //! Pinned host memory from a CUDA memory pool, used with the `cuda` feature.
-use std::{ops::Deref, slice, sync::Arc};
+use std::ops::Deref;
+use std::slice;
+use std::sync::Arc;
 
 use cuda_async::device_context::{init_device_contexts, with_device};
 use cuda_core::{MemPool, Stream, free_async, malloc_from_pool_async, sys};
@@ -7,13 +9,13 @@ use cuda_core::{MemPool, Stream, free_async, malloc_from_pool_async, sys};
 use crate::error;
 
 #[derive(Clone)]
-pub(crate) struct HostPool {
+pub struct HostPool {
     mempool: Arc<MemPool>,
     stream: Arc<Stream>,
 }
 
 impl HostPool {
-    pub(crate) fn new() -> error::Result<Self> {
+    pub fn new() -> error::Result<Self> {
         init_device_contexts(0, 1).expect("init failed (requires GPU)");
 
         // SAFETY: CUmemPoolProps is a plain C struct; all-zero is a valid starting value.

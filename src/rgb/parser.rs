@@ -16,7 +16,7 @@ const RGB_FOOTER_SIZE: usize = size_of::<RawRgbPacketFooter>(); // 56
 
 /// Accumulates raw bulk transfer chunks and extracts one complete JPEG frame
 /// per packet, along with its sequence, timestamp, and exposure metadata.
-pub(crate) struct RgbStreamParser {
+pub struct RgbStreamParser {
     packet: Option<JpegPacket>,
     pool: HostPool,
 }
@@ -43,7 +43,7 @@ struct RawRgbPacketFooter {
     unknown4: [u32; 3], // seems to be 0 all the time
 }
 
-pub(crate) struct JpegPacket {
+pub struct JpegPacket {
     sequence: u32,
     timestamp: u32,
     jpeg_data: HostBuffer,
@@ -67,7 +67,7 @@ impl RgbStreamParser {
     // const BUFFER_SIZE: usize = 0x200000; // 2 MB // 2*1024*1024
     const BUFFER_SIZE: usize = 0x400000; // 4 MB // 4*1024*1024
 
-    pub(crate) fn new(pool: HostPool) -> Self {
+    pub fn new(pool: HostPool) -> Self {
         Self { packet: None, pool }
     }
 

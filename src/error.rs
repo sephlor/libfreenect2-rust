@@ -1,4 +1,5 @@
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("IO error: {0}")]
     ThreadSpawn(#[from] std::io::Error),
@@ -16,9 +17,6 @@ pub enum Error {
     #[cfg(feature = "cuda")]
     #[error("CUDA device error: {0}")]
     CudaDevice(#[from] cuda_async::error::DeviceError),
-
-    #[error("window event loop error: {0}")]
-    EventLoop(#[from] winit::error::EventLoopError),
 
     #[error("no Kinect device found")]
     NoDevice,

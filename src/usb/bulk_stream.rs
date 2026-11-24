@@ -8,7 +8,7 @@ use log::{debug, error, info, warn};
 use nusb::transfer::{Bulk, In, TransferError};
 use nusb::{Endpoint, Interface};
 
-use crate::error::{self};
+use crate::error;
 use crate::rgb::{JpegPacket, RgbStreamParser};
 use crate::usb::TIMEOUT;
 

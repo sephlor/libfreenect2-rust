@@ -13,11 +13,11 @@ use zune_jpeg::zune_core::options::DecoderOptions;
 
 use crate::rgb::JpegPacket;
 
-pub(crate) struct Frame {
-    pub(crate) width: usize,
-    pub(crate) height: usize,
-    pub(crate) data: Vec<u8>,
-    pub(crate) sequence: u32,
+pub struct Frame {
+    pub width: usize,
+    pub height: usize,
+    pub data: Vec<u8>,
+    pub sequence: u32,
 }
 
 #[allow(dead_code)]
@@ -82,7 +82,7 @@ pub(crate) fn run_gpu(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) 
 
 // Option to decode on CPU for performance comparison
 #[allow(dead_code)]
-pub(crate) fn run_cpu(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) {
+pub fn run_cpu(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) {
     let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
     let mut dropped = 0u64;
 

@@ -1,8 +1,9 @@
-use log::{debug, error, info, warn};
-use nusb::DeviceInfo;
 use std::sync::mpsc::SyncSender;
 use std::thread::sleep;
 use std::time::Duration;
+
+use log::{debug, error, info, warn};
+use nusb::DeviceInfo;
 
 use crate::error::{self, Error};
 use crate::protocol::{Command, CommandTransaction, response};
@@ -39,7 +40,7 @@ impl Kinect {
         Self::open(kinect_info)
     }
 
-    pub fn open(info: &DeviceInfo) -> error::Result<Self> {
+    pub(crate) fn open(info: &DeviceInfo) -> error::Result<Self> {
         let serial = info
             .serial_number()
             .ok_or(Error::NoSerialNumber)?

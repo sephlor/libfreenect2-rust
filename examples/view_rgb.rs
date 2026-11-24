@@ -1,21 +1,14 @@
+mod common;
+
+use std::error::Error;
+use std::process::ExitCode;
+use std::sync::mpsc;
 use std::thread;
-use std::{process::ExitCode, sync::mpsc};
 
 use log::error;
 
-use crate::decode::Frame;
-use crate::host_memory::HostPool;
-use crate::kinect::Kinect;
-use crate::rgb::{JpegPacket, RgbStreamParser};
-
-mod decode;
-mod error;
-mod host_memory;
-mod kinect;
-mod protocol;
-mod render;
-mod rgb;
-mod usb;
+use common::render;
+use libfreenect2_rust::{Frame, HostPool, JpegPacket, Kinect, RgbStreamParser, run_cpu};
 
 fn main() -> ExitCode {
     env_logger::Builder::new()
@@ -33,7 +26,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> error::Result<()> {
+fn run() -> Result<(), Box<dyn Error>> {
     let pool = HostPool::new()?;
 
     let parser = RgbStreamParser::new(pool);
@@ -49,7 +42,7 @@ fn run() -> error::Result<()> {
 
     let decode_thread = thread::Builder::new()
         .name("decode".into())
-        .spawn(move || decode::run_cpu(packet_rx, frame_tx))?;
+        .spawn(move || run_cpu(packet_rx, frame_tx))?;
 
     let render_result = render::run(frame_rx);
 
