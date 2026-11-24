@@ -11,7 +11,10 @@ baracuda-nvjpeg = "0.1.0-alpha.148"
 cuda-async = { git = "https://github.com/sephlor/cuda-rust.git", branch = "new_mem_pool_with_params" }
 cuda-core = { git = "https://github.com/sephlor/cuda-rust.git", branch = "new_mem_pool_with_params" }
 env_logger = "0.11.11"
+glow = "0.18.0"
+glutin = "0.32.3"
+glutin-winit = "0.5"
 log = "0.4.35"
 nusb = "0.2"
-sdl2 = "0.39.0"
 thiserror = "2.0.21"
+winit = "0.30"

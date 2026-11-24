@@ -4,7 +4,6 @@ use std::{process::ExitCode, sync::mpsc};
 use log::error;
 
 use crate::decode::Frame;
-use crate::error::Error;
 use crate::kinect::Kinect;
 use crate::pool::HostPool;
 use crate::rgb::{JpegPacket, RgbStreamParser};
@@ -63,5 +62,5 @@ fn run() -> error::Result<()> {
 
     kinect.close()?;
 
-    render_result.map_err(Error::Sdl)
+    render_result
 }

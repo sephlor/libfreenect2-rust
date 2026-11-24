@@ -9,13 +9,8 @@ use crate::rgb::JpegPacket;
 pub(crate) struct Frame {
     pub(crate) width: usize,
     pub(crate) height: usize,
-    // pub(crate) bytes_per_pixel: usize,
     pub(crate) data: Vec<u8>,
-    // pub(crate) timestamp: u32,
     pub(crate) sequence: u32,
-    // pub(crate) exposure: f32,
-    // pub(crate) gain: f32,
-    // pub(crate) gamma: f32,
 }
 
 pub(crate) fn run(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) {

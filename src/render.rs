@@ -1,83 +1,358 @@
-//! Window and rendering on the main thread, with SDL2.
+//! Window and rendering on the main thread: winit for the window and events,
+//! glutin for the GL context, glow for GL calls.
 //!
-//! One loop: handle events, upload a new frame if one is waiting, draw.
-//! SDL's renderer scales the texture to the window on the GPU.
+//! winit owns the loop: `run_app` takes over the main thread and calls the
+//! `ApplicationHandler` methods on `App` as events arrive.
+use std::num::NonZeroU32;
 use std::sync::mpsc::Receiver;
 
-use log::info;
-use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
-use sdl2::pixels::PixelFormatEnum;
-use sdl2::render::Texture;
+use glow::HasContext;
+use glutin::config::{Api, ConfigTemplateBuilder};
+use glutin::context::{
+    ContextApi, ContextAttributesBuilder, GlProfile, NotCurrentGlContext, PossiblyCurrentContext,
+    Version,
+};
+use glutin::display::{GetGlDisplay, GlDisplay};
+use glutin::surface::{GlSurface, Surface, SwapInterval, WindowSurface};
+use glutin_winit::{DisplayBuilder, GlWindow};
+use log::{debug, info, warn};
+use winit::application::ApplicationHandler;
+use winit::dpi::LogicalSize;
+use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::keyboard::{Key, NamedKey};
+use winit::raw_window_handle::HasWindowHandle;
+use winit::window::{Window, WindowId};
 
 use crate::decode::Frame;
+use crate::error;
 
-/// Opens the window and blocks until it's closed or Escape is pressed.
-/// Must run on the main thread.
-pub(crate) fn run(frames: Receiver<Frame>) -> Result<(), String> {
-    let sdl = sdl2::init()?;
-    let video = sdl.video()?;
-    // Linear filtering when the texture is scaled to the window size.
-    sdl2::hint::set("SDL_RENDER_SCALE_QUALITY", "1");
+/// Covers the viewport with one oversized triangle, so no vertex buffer is
+/// needed. V is flipped because JPEG rows start at the top and GL's start at
+/// the bottom.
+const VERTEX_SHADER: &str = r#"#version 330 core
+out vec2 uv;
 
-    let window = video
-        .window("Kinect RGB - ESC to exit", 960, 540)
-        .position_centered()
-        .resizable()
-        .build()
-        .map_err(|e| e.to_string())?;
-    // A GPU-backed renderer; present() waits for vsync, which paces the loop.
-    let mut canvas = window
-        .into_canvas()
-        .accelerated()
-        .present_vsync()
-        .build()
-        .map_err(|e| e.to_string())?;
-    let texture_creator = canvas.texture_creator();
-    // Created on the first frame, once the size is known, then reused.
-    let mut texture: Option<Texture> = None;
-    let mut events = sdl.event_pump()?;
+void main() {
+    vec2 position = vec2(gl_VertexID == 1 ? 3.0 : -1.0, gl_VertexID == 2 ? 3.0 : -1.0);
+    uv = vec2((position.x + 1.0) / 2.0, 1.0 - (position.y + 1.0) / 2.0);
+    gl_Position = vec4(position, 0.0, 1.0);
+}
+"#;
 
-    'running: loop {
-        // Handle every pending event (close button, Escape, resize).
-        for event in events.poll_iter() {
-            match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::ESCAPE),
-                    ..
-                } => break 'running,
-                _ => {}
+const FRAGMENT_SHADER: &str = r#"#version 330 core
+in vec2 uv;
+out vec4 color;
+uniform sampler2D image;
+
+void main() {
+    color = vec4(texture(image, uv).rgb, 1.0);
+}
+"#;
+
+const RGB_BYTES_PER_PIXEL: usize = 3;
+
+struct App {
+    renderer: Option<Renderer>,
+    frames: Receiver<Frame>,
+}
+
+struct Renderer {
+    gl: glow::Context,
+    program: glow::Program,
+    // Core profile requires a bound VAO to draw, even with no vertex data.
+    vertex_array: glow::VertexArray,
+    texture: glow::Texture,
+    /// Allocated texture size, `None` until the first frame arrives.
+    image_size: Option<(i32, i32)>,
+    surface: Surface<WindowSurface>,
+    context: PossiblyCurrentContext,
+    // Drops last
+    window: Window,
+}
+
+impl Renderer {
+    fn new(event_loop: &ActiveEventLoop) -> Self {
+        let attributes = Window::default_attributes()
+            .with_title("Kinect RGB - ESC to exit")
+            .with_inner_size(LogicalSize::new(960.0, 540.0));
+
+        let (window, config) = DisplayBuilder::new()
+            .with_window_attributes(Some(attributes))
+            .build(
+                event_loop,
+                ConfigTemplateBuilder::new().with_api(Api::OPENGL),
+                |mut configs| configs.next().expect("no GL configs"),
+            )
+            .expect("failed to create GL display");
+        let window = window.expect("window wasn't created");
+        let display = config.display();
+
+        let raw_handle = window.window_handle().ok().map(|h| h.as_raw());
+        let context_attributes = ContextAttributesBuilder::new()
+            .with_context_api(ContextApi::OpenGl(Some(Version::new(3, 3))))
+            .with_profile(GlProfile::Core)
+            .build(raw_handle);
+        // SAFETY: context outlives the window
+        let context = unsafe { display.create_context(&config, &context_attributes) }
+            .expect("failed to create GL context");
+
+        let surface_attributes = window
+            .build_surface_attributes(Default::default())
+            .expect("failed to get surface attributes");
+        // SAFETY: as above, the window outlives the surface.
+        let surface = unsafe { display.create_window_surface(&config, &surface_attributes) }
+            .expect("failed to create GL surface");
+
+        let context = context
+            .make_current(&surface)
+            .expect("failed to make GL context current");
+
+        // Vsync: swap_buffers waits for the next display refresh.
+        let one = NonZeroU32::new(1).expect("1 is not zero");
+        if let Err(e) = surface.set_swap_interval(&context, SwapInterval::Wait(one)) {
+            warn!("couldn't enable vsync: {e}");
+        }
+
+        // SAFETY: the context is current, so the loaded pointers belong to it.
+        let gl = unsafe {
+            glow::Context::from_loader_function_cstr(|name| display.get_proc_address(name))
+        };
+        // SAFETY: a plain query with a current context.
+        let version = unsafe { gl.get_parameter_string(glow::VERSION) };
+        info!("window opened, GL {version}");
+
+        // SAFETY: the context is current on this thread.
+        let (program, vertex_array, texture) = unsafe {
+            let program = create_program(&gl);
+            let vertex_array = gl
+                .create_vertex_array()
+                .expect("failed to create vertex array");
+            let texture = gl.create_texture().expect("failed to create texture");
+
+            gl.use_program(Some(program));
+            gl.bind_vertex_array(Some(vertex_array));
+            gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+            for (parameter, value) in [
+                (glow::TEXTURE_MIN_FILTER, glow::LINEAR),
+                (glow::TEXTURE_MAG_FILTER, glow::LINEAR),
+                (glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE),
+                (glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE),
+            ] {
+                gl.tex_parameter_i32(glow::TEXTURE_2D, parameter, value as i32);
             }
-        }
+            // RGB rows aren't always a multiple of GL's default 4-byte alignment.
+            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+            gl.clear_color(0.0, 0.0, 0.0, 1.0);
 
-        // Never block: take a frame only if one is waiting.
-        if let Ok(frame) = frames.try_recv() {
-            if texture.is_none() {
-                let (w, h) = (frame.width as u32, frame.height as u32);
-                texture = Some(
-                    texture_creator
-                        .create_texture_streaming(PixelFormatEnum::RGB24, w, h)
-                        .map_err(|e| e.to_string())?,
-                );
-                // Draw in 1920x1080 coordinates; SDL letterboxes to keep 16:9.
-                canvas.set_logical_size(w, h).map_err(|e| e.to_string())?;
-                info!("texture created: {w}x{h}");
-            }
-            // nvJPEG's RGB bytes go straight in. Pitch = bytes per row.
-            texture
-                .as_mut()
-                .expect("created above")
-                .update(None, &frame.data, frame.width * 3)
-                .map_err(|e| e.to_string())?;
-            // `frame` drops here; SDL has its own copy of the pixels.
-        }
+            (program, vertex_array, texture)
+        };
 
-        canvas.clear();
-        if let Some(texture) = &texture {
-            canvas.copy(texture, None, None)?; // None, None = whole texture, whole window
+        Self {
+            gl,
+            program,
+            vertex_array,
+            texture,
+            image_size: None,
+            surface,
+            context,
+            window,
         }
-        canvas.present();
     }
+
+    fn upload(&mut self, frame: &Frame) {
+        let expected = frame.width * frame.height * RGB_BYTES_PER_PIXEL;
+        if frame.data.len() != expected {
+            warn!(
+                "seq {}: expected {expected} bytes, got {}",
+                frame.sequence,
+                frame.data.len()
+            );
+            return;
+        }
+        let (Ok(width), Ok(height)) = (i32::try_from(frame.width), i32::try_from(frame.height))
+        else {
+            warn!(
+                "seq {}: frame too large: {}x{}",
+                frame.sequence, frame.width, frame.height
+            );
+            return;
+        };
+
+        // SAFETY: the context is current, the texture is bound (in `new`), and
+        // `data` was checked above to hold exactly width * height RGB pixels.
+        unsafe {
+            if self.image_size != Some((width, height)) {
+                self.gl.tex_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    glow::RGB8 as i32,
+                    width,
+                    height,
+                    0,
+                    glow::RGB,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelUnpackData::Slice(None),
+                );
+                self.image_size = Some((width, height));
+            }
+            self.gl.tex_sub_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                0,
+                0,
+                width,
+                height,
+                glow::RGB,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(Some(&frame.data)),
+            );
+        }
+    }
+
+    fn resize(&self, width: u32, height: u32) {
+        if let (Some(width), Some(height)) = (NonZeroU32::new(width), NonZeroU32::new(height)) {
+            self.surface.resize(&self.context, width, height);
+        }
+    }
+
+    fn draw(&self) {
+        let window_size = self.window.inner_size();
+        // SAFETY: the context is current on this thread (made so in `new`),
+        // and the program, VAO, and texture stay bound.
+        unsafe {
+            self.gl.clear(glow::COLOR_BUFFER_BIT);
+            if let Some(image_size) = self.image_size {
+                let (x, y, width, height) = letterbox(
+                    (window_size.width as i32, window_size.height as i32),
+                    image_size,
+                );
+                self.gl.viewport(x, y, width, height);
+                self.gl.draw_arrays(glow::TRIANGLES, 0, 3);
+            }
+        }
+        // Show what we drew. With vsync this blocks until the next refresh,
+        // which paces the whole loop.
+        self.surface
+            .swap_buffers(&self.context)
+            .expect("swap_buffers failed");
+    }
+}
+
+impl Drop for Renderer {
+    fn drop(&mut self) {
+        // SAFETY: the context is still current, and these objects aren't used
+        // again.
+        unsafe {
+            self.gl.delete_texture(self.texture);
+            self.gl.delete_vertex_array(self.vertex_array);
+            self.gl.delete_program(self.program);
+        }
+    }
+}
+
+/// Largest centered viewport with the image's aspect ratio, as (x, y, w, h).
+fn letterbox(window: (i32, i32), image: (i32, i32)) -> (i32, i32, i32, i32) {
+    let (window_w, window_h) = (i64::from(window.0), i64::from(window.1));
+    let (image_w, image_h) = (i64::from(image.0), i64::from(image.1));
+    let (w, h) = if window_w * image_h > window_h * image_w {
+        (window_h * image_w / image_h, window_h)
+    } else {
+        (window_w, window_w * image_h / image_w)
+    };
+    (
+        ((window_w - w) / 2) as i32,
+        ((window_h - h) / 2) as i32,
+        w as i32,
+        h as i32,
+    )
+}
+
+/// # Safety
+/// A GL context must be current on this thread.
+unsafe fn create_program(gl: &glow::Context) -> glow::Program {
+    // SAFETY: the caller guarantees a current context.
+    unsafe {
+        let program = gl.create_program().expect("failed to create GL program");
+        let mut shaders = Vec::with_capacity(2);
+        for (kind, source) in [
+            (glow::VERTEX_SHADER, VERTEX_SHADER),
+            (glow::FRAGMENT_SHADER, FRAGMENT_SHADER),
+        ] {
+            let shader = gl.create_shader(kind).expect("failed to create GL shader");
+            gl.shader_source(shader, source);
+            gl.compile_shader(shader);
+            assert!(
+                gl.get_shader_compile_status(shader),
+                "shader compile failed: {}",
+                gl.get_shader_info_log(shader)
+            );
+            gl.attach_shader(program, shader);
+            shaders.push(shader);
+        }
+        gl.link_program(program);
+        assert!(
+            gl.get_program_link_status(program),
+            "program link failed: {}",
+            gl.get_program_info_log(program)
+        );
+        for shader in shaders {
+            gl.detach_shader(program, shader);
+            gl.delete_shader(shader);
+        }
+        program
+    }
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.renderer.is_none() {
+            self.renderer = Some(Renderer::new(event_loop));
+        }
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        let Some(renderer) = &mut self.renderer else {
+            return;
+        };
+        match event {
+            WindowEvent::CloseRequested
+            | WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key: Key::Named(NamedKey::Escape),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } => {
+                info!("window closed");
+                event_loop.exit();
+            }
+            WindowEvent::Resized(size) => renderer.resize(size.width, size.height),
+            WindowEvent::RedrawRequested => {
+                // Take a new frame if one is waiting, without blocking.
+                // Otherwise the last uploaded image is drawn again.
+                if let Ok(frame) = self.frames.try_recv() {
+                    debug!("seq {}: {}x{}", frame.sequence, frame.width, frame.height);
+                    renderer.upload(&frame);
+                }
+                renderer.draw();
+                // Ask for the next redraw right away; vsync in `draw` paces it.
+                renderer.window.request_redraw();
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Opens the window and blocks until it's closed. Must run on the main thread.
+pub(crate) fn run(frames: Receiver<Frame>) -> error::Result<()> {
+    let event_loop = EventLoop::new()?;
+    let mut app = App {
+        renderer: None,
+        frames,
+    };
+    event_loop.run_app(&mut app)?;
     Ok(())
 }
