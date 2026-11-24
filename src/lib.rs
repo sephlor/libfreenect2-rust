@@ -2,6 +2,7 @@ mod decode;
 mod error;
 mod host_memory;
 mod kinect;
+mod nvjpeg;
 mod protocol;
 mod rgb;
 mod usb;

@@ -39,7 +39,6 @@ pub(crate) fn version() -> Result<(c_int, c_int, c_int)> {
 }
 
 /// Header info for one JPEG, read without decoding it.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ImageInfo {
     /// Size of the full-resolution (luma) plane, in pixels.
@@ -54,13 +53,10 @@ pub(crate) struct ImageInfo {
 /// An nvJPEG library handle (`nvjpegHandle_t`). Destroyed on drop.
 ///
 /// Not `Send`: it's created and used on the decode thread only.
-// Unused outside tests until decode.rs switches over to this module.
-#[allow(dead_code)]
 pub(crate) struct Handle {
     raw: sys::nvjpegHandle_t,
 }
 
-#[allow(dead_code)]
 impl Handle {
     pub(crate) fn new() -> Result<Self> {
         let mut raw = ptr::null_mut();
@@ -129,13 +125,11 @@ impl Drop for Handle {
 /// handle while a state still exists (the C API requires that order), and
 /// `decode` always uses the handle this state was made from, so the two can't
 /// be mismatched.
-#[allow(dead_code)]
 pub(crate) struct State<'h> {
     raw: sys::nvjpegJpegState_t,
     handle: &'h Handle,
 }
 
-#[allow(dead_code)]
 impl<'h> State<'h> {
     pub(crate) fn new(handle: &'h Handle) -> Result<Self> {
         let mut raw = ptr::null_mut();

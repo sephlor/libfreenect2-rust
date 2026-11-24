@@ -7,11 +7,9 @@ edition = "2024"
 
 [features]
 default = ["cuda"]
-cuda = ["dep:baracuda-driver", "dep:baracuda-nvjpeg", "dep:cuda-async", "dep:cuda-core"]
+cuda = ["dep:cuda-async", "dep:cuda-core"]
 
 [dependencies]
-baracuda-driver = { version = "0.1.0-alpha.148", optional = true }
-baracuda-nvjpeg = { version = "0.1.0-alpha.148", optional = true }
 cuda-async = { git = "https://github.com/sephlor/cuda-rust.git", branch = "new_mem_pool_with_params", optional = true }
 cuda-core = { git = "https://github.com/sephlor/cuda-rust.git", branch = "new_mem_pool_with_params", optional = true }
 log = "0.4.35"

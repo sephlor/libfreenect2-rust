@@ -2,15 +2,18 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError, TryS
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "cuda")]
-use baracuda_driver::{Context, Device, DeviceBuffer, PrimaryContext};
-#[cfg(feature = "cuda")]
-use baracuda_nvjpeg::{Handle, PixelFormat, State, decode_interleaved};
-use log::{debug, error, info, warn};
+use cuda_core::{Context, DeviceBuffer};
+use log::{debug, info, warn};
 use zune_jpeg::JpegDecoder;
 use zune_jpeg::zune_core::bytestream::ZCursor;
 use zune_jpeg::zune_core::colorspace::ColorSpace;
 use zune_jpeg::zune_core::options::DecoderOptions;
 
+use crate::error;
+#[cfg(feature = "cuda")]
+use crate::error::Error;
+#[cfg(feature = "cuda")]
+use crate::nvjpeg::{self, Handle, State};
 use crate::rgb::JpegPacket;
 
 pub struct Frame {
@@ -59,18 +62,19 @@ impl FrameReceiver {
     }
 }
 
+/// Decodes on the GPU with nvJPEG.
 #[cfg(feature = "cuda")]
-pub(crate) fn run_gpu(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) {
-    // TODO: do something besides unwrap
-    let device = Device::get(0).unwrap();
-    let primary = PrimaryContext::retain(&device).unwrap();
-    // SAFETY: `primary` keeps the device's primary context alive for the whole
-    // function. `context` and every clone of it (the one inside `output_buffer`)
-    // are declared after `primary`, so they drop before it does.
-    let context = unsafe { Context::borrow_raw(primary.as_raw(), &device) };
-    // TODO: this uses hybrid backend only, try swapping out backends with raw FFI or nvjpeg-sys
-    let handle = Handle::new().unwrap();
-    let state = State::new(&handle).unwrap();
+pub(crate) fn run_gpu(
+    packets: Receiver<JpegPacket>,
+    frames: SyncSender<Frame>,
+) -> error::Result<()> {
+    // Retains device 0's primary context, the same one HostPool uses, so the
+    // pinned packet buffers are valid here. nvJPEG and the copies share one
+    // stream.
+    let context = Context::new(0)?;
+    let stream = context.new_stream()?;
+    let handle = Handle::new()?;
+    let mut state = State::new(&handle)?;
 
     // TODO: replace with a device pool eventually
     let mut output_buffer: Option<DeviceBuffer<u8>> = None;
@@ -79,39 +83,48 @@ pub(crate) fn run_gpu(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) 
     info!("decoding on the GPU (nvJPEG)");
     for packet in packets {
         let jpeg_bytes = packet.jpeg_data();
-        let info = handle.image_info(jpeg_bytes).unwrap();
-        let width = info.width();
-        let height = info.height();
-        let format = PixelFormat::Rgbi;
-        let size = width as usize * height as usize * format.bytes_per_pixel();
         let sequence = *packet.sequence();
 
-        if output_buffer.as_ref().map(DeviceBuffer::len) != Some(size) {
-            output_buffer = Some(DeviceBuffer::new(&context, size).unwrap());
-        }
-        let output = output_buffer.as_mut().unwrap();
+        let info = match handle.image_info(jpeg_bytes) {
+            Ok(info) => info,
+            Err(e) => {
+                warn!("seq {sequence}: bad jpeg header: {e}");
+                continue;
+            }
+        };
+        let size = info.width * info.height * nvjpeg::RGB_BYTES_PER_PIXEL;
 
-        if let Err(e) = decode_interleaved(&handle, &state, jpeg_bytes, format, output, width, None)
-        {
-            warn!("seq {sequence}: decode failed: {e}");
-            continue;
+        // Reuse the buffer while the size stays the same.
+        let output = match output_buffer.take() {
+            Some(buffer) if buffer.len() == size => output_buffer.insert(buffer),
+            _ => output_buffer.insert(DeviceBuffer::zeroed(&stream, size)?),
+        };
+
+        // decode_rgbi synchronizes, so nvJPEG is done reading the packet's
+        // pinned buffer before the packet drops (and frees it on another stream).
+        match state.decode_rgbi(jpeg_bytes, output, &stream) {
+            Ok(_) => {}
+            Err(Error::NvJpeg(status)) => {
+                warn!("seq {sequence}: decode failed with nvJPEG status {status}");
+                continue;
+            }
+            Err(e) => return Err(e),
         }
 
         // change this to a new pinned host buffer so we copy to pinned memory, or render from device
         let mut data = vec![0; size];
-
-        output.copy_to_host(&mut data).unwrap();
+        output.copy_to_host(&stream, &mut data)?;
 
         let frame = Frame {
             sequence,
-            width: width as usize,
-            height: height as usize,
+            width: info.width,
+            height: info.height,
             data,
         };
 
         match frames.try_send(frame) {
             Err(TrySendError::Disconnected(_)) => {
-                error!("receiver disconnected, stopping");
+                log::error!("receiver disconnected, stopping");
                 break;
             }
             Err(TrySendError::Full(_)) => {
@@ -122,11 +135,15 @@ pub(crate) fn run_gpu(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) 
         }
     }
     debug!("decode thread done, dropped {dropped} frames");
+    Ok(())
 }
 
-// Option to decode on CPU for performance comparison
-#[allow(dead_code)]
-pub(crate) fn run_cpu(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) {
+/// Decodes on the CPU with zune-jpeg.
+#[cfg_attr(feature = "cuda", allow(dead_code))]
+pub(crate) fn run_cpu(
+    packets: Receiver<JpegPacket>,
+    frames: SyncSender<Frame>,
+) -> error::Result<()> {
     let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
     let mut dropped = 0u64;
 
@@ -163,10 +180,11 @@ pub(crate) fn run_cpu(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) 
                 debug!("decode: dropped frame ({dropped} total)");
             }
             Err(TrySendError::Disconnected(_)) => {
-                error!("receiver disconnected, stopping");
+                log::error!("receiver disconnected, stopping");
                 break;
             }
         }
     }
     debug!("decode thread done, dropped {dropped} frames");
+    Ok(())
 }
