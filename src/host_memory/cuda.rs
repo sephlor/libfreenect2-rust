@@ -8,14 +8,14 @@ use cuda_core::{MemPool, Stream, free_async, malloc_from_pool_async, sys};
 
 use crate::error;
 
-#[derive(Clone)]
-pub struct HostPool {
+#[derive(Clone, Debug)]
+pub(crate) struct HostPool {
     mempool: Arc<MemPool>,
     stream: Arc<Stream>,
 }
 
 impl HostPool {
-    pub fn new() -> error::Result<Self> {
+    pub(crate) fn new() -> error::Result<Self> {
         init_device_contexts(0, 1).expect("init failed (requires GPU)");
 
         // SAFETY: CUmemPoolProps is a plain C struct; all-zero is a valid starting value.

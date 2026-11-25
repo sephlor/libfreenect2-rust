@@ -5,7 +5,6 @@
 //! `ApplicationHandler` methods on `App` as events arrive.
 use std::error::Error;
 use std::num::NonZeroU32;
-use std::sync::mpsc::Receiver;
 
 use glow::HasContext;
 use glutin::config::{Api, ConfigTemplateBuilder};
@@ -25,7 +24,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::raw_window_handle::HasWindowHandle;
 use winit::window::{Window, WindowId};
 
-use libfreenect2_rust::Frame;
+use libfreenect2_rust::{Frame, FrameReceiver};
 
 /// Covers the viewport with one oversized triangle, so no vertex buffer is
 /// needed. V is flipped because JPEG rows start at the top and GL's start at
@@ -54,7 +53,7 @@ const RGB_BYTES_PER_PIXEL: usize = 3;
 
 struct App {
     renderer: Option<Renderer>,
-    frames: Receiver<Frame>,
+    frames: FrameReceiver,
 }
 
 struct Renderer {
@@ -347,7 +346,7 @@ impl ApplicationHandler for App {
 }
 
 /// Opens the window and blocks until it's closed. Must run on the main thread.
-pub(crate) fn run(frames: Receiver<Frame>) -> Result<(), Box<dyn Error>> {
+pub(crate) fn run(frames: FrameReceiver) -> Result<(), Box<dyn Error>> {
     let event_loop = EventLoop::new()?;
     let mut app = App {
         renderer: None,

@@ -1,11 +1,11 @@
-use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
-use std::time::Instant;
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "cuda")]
 use baracuda_driver::{Context, Device, DeviceBuffer, PrimaryContext};
 #[cfg(feature = "cuda")]
 use baracuda_nvjpeg::{Handle, PixelFormat, State, decode_interleaved};
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use zune_jpeg::JpegDecoder;
 use zune_jpeg::zune_core::bytestream::ZCursor;
 use zune_jpeg::zune_core::colorspace::ColorSpace;
@@ -20,7 +20,45 @@ pub struct Frame {
     pub sequence: u32,
 }
 
-#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum RecvError {
+    #[error("no frame ready")]
+    Empty,
+
+    #[error("stream stopped")]
+    Disconnected,
+}
+
+#[derive(Debug)]
+pub struct FrameReceiver {
+    frames: Receiver<Frame>,
+}
+
+impl FrameReceiver {
+    pub(crate) fn new(frames: Receiver<Frame>) -> Self {
+        Self { frames }
+    }
+
+    pub fn recv(&self) -> Result<Frame, RecvError> {
+        self.frames.recv().map_err(|_| RecvError::Disconnected)
+    }
+
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<Frame, RecvError> {
+        self.frames.recv_timeout(timeout).map_err(|e| match e {
+            RecvTimeoutError::Timeout => RecvError::Empty,
+            RecvTimeoutError::Disconnected => RecvError::Disconnected,
+        })
+    }
+
+    pub fn try_recv(&self) -> Result<Frame, RecvError> {
+        self.frames.try_recv().map_err(|e| match e {
+            TryRecvError::Empty => RecvError::Empty,
+            TryRecvError::Disconnected => RecvError::Disconnected,
+        })
+    }
+}
+
 #[cfg(feature = "cuda")]
 pub(crate) fn run_gpu(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) {
     // TODO: do something besides unwrap
@@ -36,7 +74,9 @@ pub(crate) fn run_gpu(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) 
 
     // TODO: replace with a device pool eventually
     let mut output_buffer: Option<DeviceBuffer<u8>> = None;
+    let mut dropped = 0u64;
 
+    info!("decoding on the GPU (nvJPEG)");
     for packet in packets {
         let jpeg_bytes = packet.jpeg_data();
         let info = handle.image_info(jpeg_bytes).unwrap();
@@ -74,18 +114,23 @@ pub(crate) fn run_gpu(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) 
                 error!("receiver disconnected, stopping");
                 break;
             }
-            Err(TrySendError::Full(_)) => debug!("receiver full, dropping frame"),
+            Err(TrySendError::Full(_)) => {
+                dropped += 1;
+                debug!("decode: dropped frame ({dropped} total)");
+            }
             Ok(()) => {}
         }
     }
+    debug!("decode thread done, dropped {dropped} frames");
 }
 
 // Option to decode on CPU for performance comparison
 #[allow(dead_code)]
-pub fn run_cpu(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) {
+pub(crate) fn run_cpu(packets: Receiver<JpegPacket>, frames: SyncSender<Frame>) {
     let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
     let mut dropped = 0u64;
 
+    info!("decoding on the CPU (zune-jpeg)");
     for pkt in packets {
         let start = Instant::now();
         let mut decoder = JpegDecoder::new_with_options(ZCursor::new(pkt.jpeg_data()), options);

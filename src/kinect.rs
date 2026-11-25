@@ -1,11 +1,13 @@
-use std::sync::mpsc::SyncSender;
-use std::thread::sleep;
+use std::sync::mpsc::{self, SyncSender};
+use std::thread::{self, JoinHandle, sleep};
 use std::time::Duration;
 
 use log::{debug, error, info, warn};
 use nusb::DeviceInfo;
 
+use crate::decode::{self, FrameReceiver};
 use crate::error::{self, Error};
+use crate::host_memory::HostPool;
 use crate::protocol::{Command, CommandTransaction, response};
 use crate::rgb::{JpegPacket, RgbStreamParser};
 use crate::usb::bulk_stream::BulkStream;
@@ -44,6 +46,8 @@ pub struct Kinect {
     serial: String,
     firmware: Option<String>,
     rgb_stream: Option<BulkStream>,
+    decode_thread: Option<JoinHandle<()>>,
+    pool: Option<HostPool>,
 }
 
 impl Kinect {
@@ -101,19 +105,55 @@ impl Kinect {
             serial,
             firmware,
             rgb_stream: None,
+            decode_thread: None,
+            pool: None,
         })
     }
 
-    pub fn start_rgb(
-        &mut self,
-        parser: RgbStreamParser,
-        packets: SyncSender<JpegPacket>,
-    ) -> error::Result<()> {
+    pub fn start(&mut self) -> error::Result<FrameReceiver> {
         match self.state {
             State::Closed => return Err(Error::DeviceClosed),
             State::Streaming => return Err(Error::AlreadyStreaming),
             State::Open => {}
         }
+
+        let pool = match &self.pool {
+            Some(pool) => pool.clone(),
+            None => self.pool.insert(HostPool::new()?).clone(),
+        };
+
+        let parser = RgbStreamParser::new(pool);
+
+        // TODO: count drops for both
+        let (packet_tx, packet_rx) = mpsc::sync_channel::<JpegPacket>(1);
+        let (frame_tx, frame_rx) = mpsc::sync_channel(1);
+
+        #[cfg(feature = "cuda")]
+        let decoder = decode::run_gpu;
+        #[cfg(not(feature = "cuda"))]
+        let decoder = decode::run_cpu;
+
+        let decode_thread = thread::Builder::new()
+            .name("decode".into())
+            .spawn(move || decoder(packet_rx, frame_tx))?;
+
+        // TODO: pass a closure instead?
+        if let Err(e) = self.start_rgb(parser, packet_tx) {
+            if decode_thread.join().is_err() {
+                error!("decode thread panicked");
+            }
+            return Err(e);
+        }
+        self.decode_thread = Some(decode_thread);
+
+        Ok(FrameReceiver::new(frame_rx))
+    }
+
+    fn start_rgb(
+        &mut self,
+        parser: RgbStreamParser,
+        packets: SyncSender<JpegPacket>,
+    ) -> error::Result<()> {
         info!("starting");
 
         self.usb.set_video_function_enabled(true)?;
@@ -192,6 +232,11 @@ impl Kinect {
 
             if let Some(stream) = self.rgb_stream.take() {
                 stream.stop();
+            }
+            if let Some(decode_thread) = self.decode_thread.take()
+                && decode_thread.join().is_err()
+            {
+                error!("decode thread panicked");
             }
 
             self.usb.set_ir_interface_enabled(false)?;

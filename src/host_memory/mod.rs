@@ -5,11 +5,11 @@ mod cuda;
 #[cfg(feature = "cuda")]
 pub(crate) use cuda::HostBuffer;
 #[cfg(feature = "cuda")]
-pub use cuda::HostPool;
+pub(crate) use cuda::HostPool;
 
 #[cfg(not(feature = "cuda"))]
 mod heap;
 #[cfg(not(feature = "cuda"))]
 pub(crate) use heap::HostBuffer;
 #[cfg(not(feature = "cuda"))]
-pub use heap::HostPool;
+pub(crate) use heap::HostPool;

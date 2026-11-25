@@ -2,13 +2,11 @@ mod common;
 
 use std::error::Error;
 use std::process::ExitCode;
-use std::sync::mpsc;
-use std::thread;
 
 use log::error;
 
 use common::render;
-use libfreenect2_rust::{Frame, HostPool, JpegPacket, Kinect, RgbStreamParser, run_cpu};
+use libfreenect2_rust::Kinect;
 
 fn main() -> ExitCode {
     env_logger::Builder::new()
@@ -27,31 +25,13 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
-    let pool = HostPool::new()?;
-
-    let parser = RgbStreamParser::new(pool);
-
-    let (packet_tx, packet_rx) = mpsc::sync_channel::<JpegPacket>(1);
-
     let mut kinect = Kinect::open_default()?;
 
-    // TODO: pass a closure instead?
-    kinect.start_rgb(parser, packet_tx)?;
+    let frames = kinect.start()?;
 
-    let (frame_tx, frame_rx) = mpsc::sync_channel::<Frame>(1);
-
-    let decode_thread = thread::Builder::new()
-        .name("decode".into())
-        .spawn(move || run_cpu(packet_rx, frame_tx))?;
-
-    let render_result = render::run(frame_rx);
+    let render_result = render::run(frames);
 
     kinect.stop()?;
-
-    if decode_thread.join().is_err() {
-        error!("decode thread panicked");
-    }
-
     kinect.close()?;
 
     render_result
