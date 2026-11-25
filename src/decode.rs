@@ -80,7 +80,8 @@ pub(crate) fn run_gpu(
     let mut output_buffer: Option<DeviceBuffer<u8>> = None;
     let mut dropped = 0u64;
 
-    info!("decoding on the GPU (nvJPEG)");
+    let (major, minor, patch) = nvjpeg::version()?;
+    info!("decoding on the GPU (nvJPEG {major}.{minor}.{patch})");
     for packet in packets {
         let jpeg_bytes = packet.jpeg_data();
         let sequence = *packet.sequence();

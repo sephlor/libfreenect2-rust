@@ -128,6 +128,9 @@ impl Kinect {
         let (packet_tx, packet_rx) = mpsc::sync_channel::<JpegPacket>(1);
         let (frame_tx, frame_rx) = mpsc::sync_channel(1);
 
+        // TODO: pass a closure instead?
+        self.start_rgb(parser, packet_tx)?;
+
         #[cfg(feature = "cuda")]
         let decoder = decode::run_gpu;
         #[cfg(not(feature = "cuda"))]
@@ -135,15 +138,11 @@ impl Kinect {
 
         let decode_thread = thread::Builder::new()
             .name("decode".into())
-            .spawn(move || decoder(packet_rx, frame_tx))?;
-
-        // TODO: pass a closure instead?
-        if let Err(e) = self.start_rgb(parser, packet_tx) {
-            if decode_thread.join().is_err() {
-                error!("decode thread panicked");
-            }
-            return Err(e);
-        }
+            .spawn(move || {
+                if let Err(e) = decoder(packet_rx, frame_tx) {
+                    error!("decode thread failed: {e}");
+                }
+            })?;
         self.decode_thread = Some(decode_thread);
 
         Ok(FrameReceiver::new(frame_rx))

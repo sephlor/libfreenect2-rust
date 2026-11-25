@@ -2,6 +2,7 @@ mod decode;
 mod error;
 mod host_memory;
 mod kinect;
+#[cfg(feature = "cuda")]
 mod nvjpeg;
 mod protocol;
 mod rgb;
