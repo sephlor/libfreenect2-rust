@@ -30,18 +30,18 @@ use nusb::{Device, DeviceInfo, Interface, MaybeFuture};
 
 use crate::error::{self, Error};
 
+const VENDOR_ID: u16 = 0x045E;
+const PRODUCT_ID: u16 = 0x02D8;
+const PRODUCT_ID_PREVIEW: u16 = 0x02C4;
+
 #[derive(Debug)]
-pub(crate) struct KinectUsb {
+pub(crate) struct DeviceHandle {
     device: Device,
     control_and_rgb_interface: Interface,
     ir_interface: Interface,
 }
 
-impl KinectUsb {
-    const VENDOR_ID: u16 = 0x045E;
-    const PRODUCT_ID: u16 = 0x02D8;
-    const PRODUCT_ID_PREVIEW: u16 = 0x02C4;
-
+impl DeviceHandle {
     pub(super) const IR_INTERFACE: u8 = 1;
     pub(super) const CONTROL_AND_RGB_INTERFACE: u8 = 0;
 
@@ -55,42 +55,6 @@ impl KinectUsb {
 
     pub(super) fn device(&self) -> &Device {
         &self.device
-    }
-
-    pub(crate) fn list_devices() -> error::Result<Vec<DeviceInfo>> {
-        let kinects: Vec<DeviceInfo> = nusb::list_devices()
-            .wait()?
-            .filter(Self::is_kinect)
-            .filter(|dev| {
-                if dev.serial_number().is_none() {
-                    warn!(
-                        "skipping Kinect at bus {} addr {}: no serial number",
-                        dev.bus_id(),
-                        dev.device_address()
-                    );
-                    return false;
-                }
-                true
-            })
-            .collect();
-
-        debug!("found {} Kinect(s)", kinects.len());
-        for dev in &kinects {
-            debug!(
-                "Kinect {} {:04x}:{:04x}",
-                describe(dev),
-                dev.vendor_id(),
-                dev.product_id()
-            );
-        }
-
-        Ok(kinects)
-    }
-
-    fn is_kinect(dev: &DeviceInfo) -> bool {
-        dev.vendor_id() == Self::VENDOR_ID
-            && (dev.product_id() == Self::PRODUCT_ID
-                || dev.product_id() == Self::PRODUCT_ID_PREVIEW)
     }
 
     /// Resets the device, then opens it. This mirrors libfreenect2
@@ -110,7 +74,7 @@ impl KinectUsb {
 
         drop(device);
         sleep(Duration::from_secs(1));
-        let new_info = Self::list_devices()?
+        let new_info = find_kinects()?
             .into_iter()
             .find(|d| d.serial_number() == info.serial_number())
             .ok_or(Error::NoDevice)?;
@@ -139,7 +103,7 @@ impl KinectUsb {
             .wait()?;
         let ir_interface = device.claim_interface(Self::IR_INTERFACE).wait()?;
 
-        let usb = KinectUsb {
+        let usb = DeviceHandle {
             device,
             control_and_rgb_interface: control_interface,
             ir_interface,
@@ -149,6 +113,41 @@ impl KinectUsb {
         info!("Kinect {} opened", describe(info));
         Ok(usb)
     }
+}
+
+pub(crate) fn find_kinects() -> error::Result<Vec<DeviceInfo>> {
+    let kinects: Vec<DeviceInfo> = nusb::list_devices()
+        .wait()?
+        .filter(is_kinect)
+        .filter(|dev| {
+            if dev.serial_number().is_none() {
+                warn!(
+                    "skipping Kinect at bus {} addr {}: no serial number",
+                    dev.bus_id(),
+                    dev.device_address()
+                );
+                return false;
+            }
+            true
+        })
+        .collect();
+
+    debug!("found {} Kinect(s)", kinects.len());
+    for dev in &kinects {
+        debug!(
+            "Kinect {} {:04x}:{:04x}",
+            describe(dev),
+            dev.vendor_id(),
+            dev.product_id()
+        );
+    }
+
+    Ok(kinects)
+}
+
+fn is_kinect(dev: &DeviceInfo) -> bool {
+    dev.vendor_id() == VENDOR_ID
+        && (dev.product_id() == PRODUCT_ID || dev.product_id() == PRODUCT_ID_PREVIEW)
 }
 
 fn describe(info: &DeviceInfo) -> String {

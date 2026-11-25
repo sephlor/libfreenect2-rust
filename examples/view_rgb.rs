@@ -33,7 +33,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let (packet_tx, packet_rx) = mpsc::sync_channel::<JpegPacket>(1);
 
-    let mut kinect = Kinect::open_default_device()?;
+    let mut kinect = Kinect::open_default()?;
 
     // TODO: pass a closure instead?
     kinect.start_rgb(parser, packet_tx)?;

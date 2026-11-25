@@ -6,5 +6,5 @@ mod device;
 
 use std::time::Duration;
 
-pub(crate) use device::KinectUsb;
+pub(crate) use device::{DeviceHandle, find_kinects};
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(1);

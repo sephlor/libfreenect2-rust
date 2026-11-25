@@ -8,5 +8,5 @@ mod usb;
 
 pub use decode::{Frame, run_cpu};
 pub use host_memory::HostPool;
-pub use kinect::Kinect;
+pub use kinect::{Kinect, KinectInfo, list_kinects};
 pub use rgb::{JpegPacket, RgbStreamParser};

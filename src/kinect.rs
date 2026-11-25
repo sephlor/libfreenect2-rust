@@ -8,19 +8,37 @@ use nusb::DeviceInfo;
 use crate::error::{self, Error};
 use crate::protocol::{Command, CommandTransaction, response};
 use crate::rgb::{JpegPacket, RgbStreamParser};
-use crate::usb::KinectUsb;
 use crate::usb::bulk_stream::BulkStream;
+use crate::usb::{self, DeviceHandle};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum State {
-    Open,
-    Streaming,
-    Closed,
+#[derive(Debug, Clone)]
+pub struct KinectInfo {
+    serial: String,
+}
+
+impl KinectInfo {
+    pub fn serial(&self) -> &str {
+        &self.serial
+    }
+}
+
+pub fn list_kinects() -> error::Result<Vec<KinectInfo>> {
+    let kinects = usb::find_kinects()?;
+    info!("found {} Kinect(s)", kinects.len());
+    Ok(kinects
+        .iter()
+        .map(|info| KinectInfo {
+            serial: info
+                .serial_number()
+                .expect("usb::find_kinects skips devices without a serial")
+                .to_owned(),
+        })
+        .collect())
 }
 
 #[derive(Debug)]
 pub struct Kinect {
-    usb: KinectUsb,
+    usb: DeviceHandle,
     tx: CommandTransaction,
     state: State,
     serial: String,
@@ -33,27 +51,55 @@ impl Kinect {
     const STATUS_REGISTER: u32 = 0x090000;
     const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-    pub fn open_default_device() -> error::Result<Self> {
-        let kinects = KinectUsb::list_devices()?;
-        info!("found {} Kinect(s)", kinects.len());
-        let kinect_info = kinects.first().ok_or(Error::NoDevice)?;
-        Self::open(kinect_info)
+    pub fn serial(&self) -> &str {
+        &self.serial
     }
 
-    pub(crate) fn open(info: &DeviceInfo) -> error::Result<Self> {
+    pub fn firmware(&self) -> Option<&str> {
+        self.firmware.as_deref()
+    }
+
+    pub fn open(serial: &str) -> error::Result<Self> {
+        let kinects = usb::find_kinects()?;
+        if kinects.is_empty() {
+            return Err(Error::NoDevice);
+        }
+        let kinect_info = kinects
+            .iter()
+            .find(|dev| dev.serial_number() == Some(serial))
+            .ok_or_else(|| Error::DeviceNotFound {
+                serial: serial.to_owned(),
+            })?;
+        Self::open_info(kinect_info)
+    }
+
+    pub fn open_default() -> error::Result<Self> {
+        let kinects = usb::find_kinects()?;
+        info!("found {} Kinect(s)", kinects.len());
+        let kinect_info = kinects.first().ok_or(Error::NoDevice)?;
+        Self::open_info(kinect_info)
+    }
+
+    fn open_info(info: &DeviceInfo) -> error::Result<Self> {
         let serial = info
             .serial_number()
             .ok_or(Error::NoSerialNumber)?
             .to_owned();
-        let usb = KinectUsb::open(info)?;
-        let tx = CommandTransaction::new(usb.control_and_rgb_interface())?;
+        let usb = DeviceHandle::open(info)?;
+        let mut tx = CommandTransaction::new(usb.control_and_rgb_interface())?;
+
+        usb.set_video_function_enabled(true)?;
+        let firmware_bytes = tx.execute(&Command::read_firmware_versions());
+        usb.set_video_function_enabled(false)?;
+        let firmware = response::parse_firmware(&firmware_bytes?);
+        info!("firmware: {}", firmware.as_deref().unwrap_or("unknown"));
 
         Ok(Self {
             usb,
             tx,
             state: State::Open,
             serial,
-            firmware: None,
+            firmware,
             rgb_stream: None,
         })
     }
@@ -71,13 +117,6 @@ impl Kinect {
         info!("starting");
 
         self.usb.set_video_function_enabled(true)?;
-
-        let firmware_bytes = self.tx.execute(&Command::read_firmware_versions())?;
-        self.firmware = response::parse_firmware(&firmware_bytes);
-        info!(
-            "firmware: {}",
-            self.firmware.as_deref().unwrap_or("unknown")
-        );
 
         self.tx.execute(&Command::read_hardware_info())?;
 
@@ -224,4 +263,11 @@ impl Drop for Kinect {
             error!("closing device failed: {e}");
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum State {
+    Open,
+    Streaming,
+    Closed,
 }

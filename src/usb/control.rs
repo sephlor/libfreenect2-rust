@@ -2,10 +2,10 @@ use log::debug;
 use nusb::MaybeFuture;
 use nusb::transfer::{ControlOut, ControlType, Recipient};
 
-use super::{KinectUsb, TIMEOUT};
+use super::{DeviceHandle, TIMEOUT};
 use crate::error;
 
-impl KinectUsb {
+impl DeviceHandle {
     pub(super) fn init_control_settings(&self) -> error::Result<()> {
         debug!("setting isochronous delay");
         self.set_isochronous_delay()?;

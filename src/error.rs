@@ -5,10 +5,7 @@ pub enum Error {
     ThreadSpawn(#[from] std::io::Error),
 
     #[error("USB error: {0}")]
-    Usb(#[from] nusb::Error),
-
-    #[error("USB transfer error: {0}")]
-    Transfer(#[from] nusb::transfer::TransferError),
+    Usb(#[source] UsbError),
 
     #[cfg(feature = "cuda")]
     #[error("CUDA driver error: {0}")]
@@ -20,6 +17,9 @@ pub enum Error {
 
     #[error("no Kinect device found")]
     NoDevice,
+
+    #[error("no Kinect found with serial number {serial}")]
+    DeviceNotFound { serial: String },
 
     #[error("Kinect has no USB serial number")]
     NoSerialNumber,
@@ -44,3 +44,31 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// USB failures not part of public API.
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub struct UsbError(UsbErrorKind);
+
+#[derive(Debug, thiserror::Error)]
+enum UsbErrorKind {
+    #[error(transparent)]
+    Usb(#[from] nusb::Error),
+
+    #[error("transfer failed: {0}")]
+    Transfer(#[from] nusb::transfer::TransferError),
+}
+
+#[doc(hidden)]
+impl From<nusb::Error> for Error {
+    fn from(e: nusb::Error) -> Self {
+        Error::Usb(UsbError(e.into()))
+    }
+}
+
+#[doc(hidden)]
+impl From<nusb::transfer::TransferError> for Error {
+    fn from(e: nusb::transfer::TransferError) -> Self {
+        Error::Usb(UsbError(e.into()))
+    }
+}
