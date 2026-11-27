@@ -1,3 +1,4 @@
+use std::fmt;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
 use std::time::{Duration, Instant};
 
@@ -17,10 +18,76 @@ use crate::nvjpeg::{self, Handle, State};
 use crate::rgb::JpegPacket;
 
 pub struct Frame {
-    pub width: usize,
-    pub height: usize,
-    pub data: Vec<u8>,
-    pub sequence: u32,
+    width: usize,
+    height: usize,
+    data: Vec<u8>,
+    sequence: u32,
+    timestamp: u32,
+    exposure: f32,
+    gain: f32,
+    gamma: f32,
+}
+
+impl Frame {
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    pub fn sequence(&self) -> u32 {
+        self.sequence
+    }
+
+    pub fn timestamp(&self) -> u32 {
+        self.timestamp
+    }
+
+    pub fn exposure(&self) -> f32 {
+        self.exposure
+    }
+
+    pub fn gain(&self) -> f32 {
+        self.gain
+    }
+
+    pub fn gamma(&self) -> f32 {
+        self.gamma
+    }
+
+    pub(crate) fn new(packet: &JpegPacket, width: usize, height: usize, data: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            data,
+            sequence: packet.sequence(),
+            timestamp: packet.timestamp(),
+            exposure: packet.exposure(),
+            gain: packet.gain(),
+            gamma: packet.gamma(),
+        }
+    }
+}
+
+impl fmt::Debug for Frame {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Frame")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("data_len", &self.data.len())
+            .field("sequence", &self.sequence)
+            .field("timestamp", &self.timestamp)
+            .field("exposure", &self.exposure)
+            .field("gain", &self.gain)
+            .field("gamma", &self.gamma)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -84,7 +151,7 @@ pub(crate) fn run_gpu(
     info!("decoding on the GPU (nvJPEG {major}.{minor}.{patch})");
     for packet in packets {
         let jpeg_bytes = packet.jpeg_data();
-        let sequence = *packet.sequence();
+        let sequence = packet.sequence();
 
         let info = match handle.image_info(jpeg_bytes) {
             Ok(info) => info,
@@ -116,12 +183,7 @@ pub(crate) fn run_gpu(
         let mut data = vec![0; size];
         output.copy_to_host(&stream, &mut data)?;
 
-        let frame = Frame {
-            sequence,
-            width: info.width,
-            height: info.height,
-            data,
-        };
+        let frame = Frame::new(&packet, info.width, info.height, data);
 
         match frames.try_send(frame) {
             Err(TrySendError::Disconnected(_)) => {
@@ -149,12 +211,12 @@ pub(crate) fn run_cpu(
     let mut dropped = 0u64;
 
     info!("decoding on the CPU (zune-jpeg)");
-    for pkt in packets {
+    for packet in packets {
         let start = Instant::now();
-        let mut decoder = JpegDecoder::new_with_options(ZCursor::new(pkt.jpeg_data()), options);
+        let mut decoder = JpegDecoder::new_with_options(ZCursor::new(packet.jpeg_data()), options);
 
         if let Err(e) = decoder.decode_headers() {
-            warn!("seq {}: bad jpeg header: {e}", pkt.sequence());
+            warn!("seq {}: bad jpeg header: {e}", packet.sequence());
             continue;
         }
         let info = decoder.info().expect("headers were decoded");
@@ -162,17 +224,21 @@ pub(crate) fn run_cpu(
 
         let mut pixels = vec![0; size];
         if let Err(e) = decoder.decode_into(&mut pixels) {
-            warn!("seq {}: decode failed: {e}", pkt.sequence());
+            warn!("seq {}: decode failed: {e}", packet.sequence());
             continue;
         }
-        debug!("seq {}: decoded in {:.1?}", pkt.sequence(), start.elapsed());
+        debug!(
+            "seq {}: decoded in {:.1?}",
+            packet.sequence(),
+            start.elapsed()
+        );
 
-        let frame = Frame {
-            sequence: *pkt.sequence(),
-            width: usize::from(info.width),
-            height: usize::from(info.height),
-            data: pixels,
-        };
+        let frame = Frame::new(
+            &packet,
+            usize::from(info.width),
+            usize::from(info.height),
+            pixels,
+        );
 
         match frames.try_send(frame) {
             Ok(()) => {}

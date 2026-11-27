@@ -160,21 +160,22 @@ impl Renderer {
     }
 
     fn upload(&mut self, frame: &Frame) {
-        let expected = frame.width * frame.height * RGB_BYTES_PER_PIXEL;
-        if frame.data.len() != expected {
+        let (width, height, data, sequence) = (
+            frame.width(),
+            frame.height(),
+            frame.data(),
+            frame.sequence(),
+        );
+        let expected = width * height * RGB_BYTES_PER_PIXEL;
+        if data.len() != expected {
             warn!(
-                "seq {}: expected {expected} bytes, got {}",
-                frame.sequence,
-                frame.data.len()
+                "seq {sequence}: expected {expected} bytes, got {}",
+                data.len()
             );
             return;
         }
-        let (Ok(width), Ok(height)) = (i32::try_from(frame.width), i32::try_from(frame.height))
-        else {
-            warn!(
-                "seq {}: frame too large: {}x{}",
-                frame.sequence, frame.width, frame.height
-            );
+        let (Ok(width), Ok(height)) = (i32::try_from(width), i32::try_from(height)) else {
+            warn!("seq {}: frame too large: {}x{}", sequence, width, height);
             return;
         };
 
@@ -204,7 +205,7 @@ impl Renderer {
                 height,
                 glow::RGB,
                 glow::UNSIGNED_BYTE,
-                glow::PixelUnpackData::Slice(Some(&frame.data)),
+                glow::PixelUnpackData::Slice(Some(data)),
             );
         }
     }
@@ -333,7 +334,12 @@ impl ApplicationHandler for App {
                 // Take a new frame if one is waiting, without blocking.
                 // Otherwise the last uploaded image is drawn again.
                 if let Ok(frame) = self.frames.try_recv() {
-                    debug!("seq {}: {}x{}", frame.sequence, frame.width, frame.height);
+                    debug!(
+                        "seq {}: {}x{}",
+                        frame.sequence(),
+                        frame.width(),
+                        frame.height()
+                    );
                     renderer.upload(&frame);
                 }
                 renderer.draw();

@@ -54,12 +54,28 @@ pub(crate) struct JpegPacket {
 }
 
 impl JpegPacket {
-    pub(crate) fn sequence(&self) -> &u32 {
-        &self.sequence
+    pub(crate) fn sequence(&self) -> u32 {
+        self.sequence
     }
 
     pub(crate) fn jpeg_data(&self) -> &[u8] {
         &self.jpeg_data
+    }
+
+    pub(crate) fn timestamp(&self) -> u32 {
+        self.timestamp
+    }
+
+    pub(crate) fn exposure(&self) -> f32 {
+        self.exposure
+    }
+
+    pub(crate) fn gain(&self) -> f32 {
+        self.gain
+    }
+
+    pub(crate) fn gamma(&self) -> f32 {
+        self.gamma
     }
 }
 
