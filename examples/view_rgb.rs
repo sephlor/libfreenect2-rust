@@ -3,10 +3,10 @@ mod common;
 use std::error::Error;
 use std::process::ExitCode;
 
+use libfreenect2_rust::Kinect;
 use log::error;
 
-use common::render;
-use libfreenect2_rust::Kinect;
+use crate::common::render;
 
 fn main() -> ExitCode {
     env_logger::Builder::new()

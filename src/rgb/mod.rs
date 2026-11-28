@@ -1,4 +1,3 @@
 mod parser;
 
-pub(crate) use parser::JpegPacket;
-pub(crate) use parser::RgbStreamParser;
+pub(crate) use parser::{JpegPacket, RgbStreamParser};

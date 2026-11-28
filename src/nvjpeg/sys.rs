@@ -5,8 +5,8 @@
 // dead_code: a binding module can declare more than the wrapper uses so far.
 #![allow(non_camel_case_types, non_snake_case, dead_code)]
 
-use core::ffi::c_int;
-use core::marker::{PhantomData, PhantomPinned};
+use std::ffi::c_int;
+use std::marker::{PhantomData, PhantomPinned};
 
 // C enums are `int`-sized on this ABI. They're aliases plus constants rather
 // than Rust enums, because C may hand back a value a Rust enum doesn't list,

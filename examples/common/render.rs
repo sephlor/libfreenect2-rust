@@ -15,6 +15,7 @@ use glutin::context::{
 use glutin::display::{GetGlDisplay, GlDisplay};
 use glutin::surface::{GlSurface, Surface, SwapInterval, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
+use libfreenect2_rust::{Frame, FrameReceiver};
 use log::{debug, info, warn};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -23,8 +24,6 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::raw_window_handle::HasWindowHandle;
 use winit::window::{Window, WindowId};
-
-use libfreenect2_rust::{Frame, FrameReceiver};
 
 /// Covers the viewport with one oversized triangle, so no vertex buffer is
 /// needed. V is flipped because JPEG rows start at the top and GL's start at

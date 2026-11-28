@@ -28,6 +28,7 @@
         "source=/dev/bus/usb,target=/dev/bus/usb,type=bind",
         "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind"
     ],
+    "postCreateCommand": "rustup toolchain install nightly --profile minimal --component rustfmt",
     "features": {
         "ghcr.io/devcontainers/features/common-utils:2": {
             "userUid": "1001",

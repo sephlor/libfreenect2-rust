@@ -17,7 +17,7 @@ pub enum Error {
 
     #[cfg(feature = "cuda")]
     #[error("nvJPEG call failed with status {0}")]
-    NvJpeg(core::ffi::c_int),
+    NvJpeg(std::ffi::c_int),
 
     #[cfg(feature = "cuda")]
     #[error("decode output buffer too small: need {needed} bytes, got {got}")]

@@ -1,6 +1,6 @@
 //! Safe wrapper over the hand-written nvJPEG bindings in `sys`.
-use core::ffi::c_int;
-use core::ptr;
+use std::ffi::c_int;
+use std::ptr;
 
 use cuda_core::{DeviceBuffer, Stream};
 use log::warn;
